@@ -1,0 +1,98 @@
+name: ppse
+
+x-backend-env: &backend-env
+  PPSE_ENVIRONMENT: ${PPSE_ENVIRONMENT:-dev}
+  PPSE_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ppse}:${POSTGRES_PASSWORD:-ppse}@db:5432/${POSTGRES_DB:-ppse}
+  PPSE_JWT_SECRET: ${PPSE_JWT_SECRET:-change-me-in-production}
+  PPSE_LOG_JSON: ${PPSE_LOG_JSON:-true}
+  PPSE_LOG_LEVEL: ${PPSE_LOG_LEVEL:-INFO}
+  PPSE_ERP_CONNECTOR: ${PPSE_ERP_CONNECTOR:-mock}
+  PPSE_SYNTHETIC_SCALE: ${PPSE_SYNTHETIC_SCALE:-medium}
+  PPSE_SYNTHETIC_SEED: ${PPSE_SYNTHETIC_SEED:-42}
+  PPSE_WRITEBACK_MODE: ${PPSE_WRITEBACK_MODE:-read_only}
+  PPSE_CORS_ORIGINS: ${PPSE_CORS_ORIGINS:-["http://localhost:5173","http://localhost:8080"]}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ppse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ppse}
+      POSTGRES_DB: ${POSTGRES_DB:-ppse}
+    volumes:
+      - ppse-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ppse} -d ${POSTGRES_DB:-ppse}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  migrate:
+    build:
+      context: ./backend
+    environment: *backend-env
+    command: ["python", "-m", "app.cli", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    build:
+      context: ./backend
+    environment: *backend-env
+    # Seeds users + default configuration and loads synthetic ERP data through the mock connector.
+    command: ["sh", "-c", "python -m app.cli seed && python -m app.cli sync --mode full"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      <<: *backend-env
+      PPSE_BACKGROUND_JOBS_ENABLED: "false"
+    command: ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    environment:
+      <<: *backend-env
+      PPSE_BACKGROUND_JOBS_ENABLED: "true"
+    # Runs the background job scheduler: ERP sync, continuous replanning, alert evaluation.
+    command: ["python", "-m", "app.cli", "worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ppse-pgdata:
