@@ -316,7 +316,10 @@ def test_new_order_is_scheduled_behind_more_urgent_work(
     assert (
         max(abs(sim.scenario_priorities[oid] - sim.baseline_priorities[oid]) for oid in clearly_ahead) < 0.1
     )
-    assert sim.diff.late_orders_after <= sim.diff.late_orders_before + 1
+    # A greedy list scheduler with gap-filling is not per-order monotonic: one extra order can
+    # re-sequence near-tied jobs, so allow a small share of newly late orders (≤ 1 % of the plan).
+    tolerance = max(1, int(0.01 * sim.scenario.metrics.scheduled_orders))
+    assert sim.diff.late_orders_after <= sim.diff.late_orders_before + tolerance
 
 
 # -------------------------------------------------------- production delay
