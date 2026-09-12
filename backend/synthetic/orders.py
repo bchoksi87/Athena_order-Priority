@@ -162,12 +162,12 @@ def _due_offset_days(rng: random.Random, closed: bool) -> int:
 def _quantity(rng: random.Random, kind: str, multiplier: float = 1.0) -> float:
     """Lot sizes: log-normal for CNC (median ~12) and printed parts (median ~6, a few big builds)."""
     if kind == "am":
-        pieces = min(60.0, math.exp(rng.gauss(1.8, 0.9)))
+        pieces = min(60.0, math.exp(rng.gauss(1.8, 0.9)) * multiplier)  # one build plate at most
     elif kind == "assembly":
-        pieces = float(rng.randint(1, 12))
+        pieces = rng.randint(1, 12) * multiplier
     else:
-        pieces = math.exp(rng.gauss(2.5, 1.0))
-    return float(max(1, round(pieces * multiplier)))
+        pieces = math.exp(rng.gauss(2.5, 1.0)) * multiplier
+    return float(max(1, round(pieces)))
 
 
 class OrderFactory:
@@ -377,9 +377,10 @@ class OrderFactory:
             else:
                 group = self._ctx.group_for(process)
             timing = catalog.PROCESS_TIMING[process]
-            cycle = round(
-                rng.uniform(timing.cycle_min, timing.cycle_max) / (1.0 + math.log10(max(quantity, 1.0))), 2
-            )
+            cycle = rng.uniform(timing.cycle_min, timing.cycle_max) / (1.0 + math.log10(max(quantity, 1.0)))
+            if group == "CNC5":
+                cycle *= catalog.FIVE_AXIS_CYCLE_FACTOR
+            cycle = round(cycle, 2)
             setup = round(rng.uniform(timing.setup_min, timing.setup_max), 1)
             machines = self._ctx.machines_by_group.get(group or "", [])
             tooling_ids: set[str] = set()

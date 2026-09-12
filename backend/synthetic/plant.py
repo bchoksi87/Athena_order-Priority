@@ -112,7 +112,7 @@ MACHINE_GROUPS: dict[str, MachineGroupSpec] = {
         "Deburring station",
         "Deburr Cell",
         ProcessType.DEBURRING,
-        (ProcessType.FINISHING,),
+        (ProcessType.FINISHING, ProcessType.SUPPORT_REMOVAL),
         ("*",),
         "default",
         16.0,
@@ -179,7 +179,7 @@ MACHINE_GROUPS: dict[str, MachineGroupSpec] = {
 GROUPS_BY_PROCESS: dict[ProcessType, tuple[str, ...]] = {
     ProcessType.CNC_MACHINING: ("CNC3", "CNC5", "LATHE"),
     ProcessType.ADDITIVE_3D_PRINTING: ("AM_SLA", "AM_MJF", "AM_FDM", "AM_DMLS"),
-    ProcessType.SUPPORT_REMOVAL: ("AMPOST",),
+    ProcessType.SUPPORT_REMOVAL: ("AMPOST", "DEBURR"),
     ProcessType.FINISHING: ("AMPOST", "DEBURR"),
     ProcessType.DEBURRING: ("DEBURR",),
     ProcessType.INSPECTION: ("CMM",),
@@ -247,6 +247,11 @@ AM_ROUTE_WEIGHTS: tuple[float, ...] = (0.4, 0.6)
 ASSEMBLY_ROUTE: tuple[ProcessType, ...] = (ProcessType.ASSEMBLY, ProcessType.INSPECTION, ProcessType.PACKING)
 
 
+#: 5-axis parts are the complex ones: their machining cycle runs longer than the
+#: process average (relative to the 3-axis / turning work).
+FIVE_AXIS_CYCLE_FACTOR = 1.3
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessTiming:
     setup_min: float
@@ -262,7 +267,7 @@ class ProcessTiming:
 #: pieces), surface treatment and packing are per-piece handling on top of a
 #: batch setup — not full per-piece process time.
 PROCESS_TIMING: dict[ProcessType, ProcessTiming] = {
-    ProcessType.CNC_MACHINING: ProcessTiming(20.0, 90.0, 1.5, 30.0),
+    ProcessType.CNC_MACHINING: ProcessTiming(20.0, 90.0, 2.0, 32.0),
     ProcessType.ADDITIVE_3D_PRINTING: ProcessTiming(15.0, 45.0, 10.0, 90.0),
     ProcessType.SUPPORT_REMOVAL: ProcessTiming(5.0, 10.0, 2.0, 8.0),
     ProcessType.DEBURRING: ProcessTiming(5.0, 15.0, 0.8, 6.0),
@@ -315,6 +320,7 @@ __all__ = [
     "CNC_ROUTES",
     "CNC_ROUTE_WEIGHTS",
     "DEFAULT_CALENDAR_ID",
+    "FIVE_AXIS_CYCLE_FACTOR",
     "GROUPS_BY_PROCESS",
     "HOLIDAYS_2026",
     "MACHINE_GROUPS",

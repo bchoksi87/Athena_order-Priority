@@ -19,6 +19,7 @@ from synthetic.plant import (
     CNC_ROUTE_WEIGHTS,
     CNC_ROUTES,
     DEFAULT_CALENDAR_ID,
+    FIVE_AXIS_CYCLE_FACTOR,
     GROUPS_BY_PROCESS,
     HOLIDAYS_2026,
     MACHINE_GROUPS,
@@ -58,16 +59,15 @@ class ScaleProfile:
 # the plant runs at ~85-90 % of its 30-day calendar capacity with the 5-axis
 # cell and the CMM room as the bottlenecks (see the calibration notes in
 # ``synthetic.generator``). Large is medium x4 (20,000 vs 5,000 lines).
-_SMALL_MACHINES = {
+_SMALL_MACHINES = {  # no AM post cell: the deburr bay strips supports
     "CNC3": 2,
-    "CNC5": 1,
-    "LATHE": 1,
+    "CNC5": 2,
+    "LATHE": 2,
     "AM_SLA": 1,
     "AM_FDM": 1,
-    "DEBURR": 1,
+    "DEBURR": 2,
     "CMM": 1,
     "SURF": 1,
-    "AMPOST": 1,
     "ASSY": 1,
     "PACK": 1,
 }
@@ -82,16 +82,16 @@ _MEDIUM_MACHINES = {
     "AM_DMLS": 2,
     "DEBURR": 6,
     "CMM": 5,
-    "SURF": 4,
+    "SURF": 3,
     "AMPOST": 3,
     "ASSY": 3,
-    "PACK": 4,
+    "PACK": 3,
 }
 
 _LARGE_MACHINES = {group: count * 4 for group, count in _MEDIUM_MACHINES.items()}
 
 SCALES: dict[str, ScaleProfile] = {
-    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES, lot_multiplier=3.0),
+    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES, lot_multiplier=6.0),
     "medium": ScaleProfile("medium", 800, 5_000, 33, 40, _MEDIUM_MACHINES),
     "large": ScaleProfile("large", 800, 20_000, 33, 40, _LARGE_MACHINES),
 }
@@ -348,6 +348,7 @@ __all__ = [
     "CUSTOMER_PREFIXES",
     "CUSTOMER_SUFFIXES",
     "DEFAULT_CALENDAR_ID",
+    "FIVE_AXIS_CYCLE_FACTOR",
     "GROUPS_BY_PROCESS",
     "HOLIDAYS_2026",
     "MACHINE_GROUPS",
