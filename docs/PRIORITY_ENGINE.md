@@ -438,9 +438,10 @@ evaluates both profiles on the same snapshot and returns a `ProfileComparison`:
   reused with `dataclasses.replace(ctx, profile=B, weights=B.weight_map())`; a threshold change
   rebuilds it.
 
-The preview does not persist anything. The endpoint named in the contract
-(`POST /priority/configuration/preview`) is not yet implemented (`backend/app/api/v1/` contains
-only `auth` and `health`); the engine function is complete and tested (`test_priority_preview.py`).
+The preview does not persist anything. It is exposed as
+`POST /api/v1/priority/configuration/preview` (`app/api/v1/priority_config.py`, backed by
+`ConfigService.preview_profile(candidate, top_n) -> ProfileComparison`, which delegates to
+`compare_profiles`); the engine function is tested in `test_priority_preview.py`.
 
 ---
 
@@ -587,4 +588,8 @@ Reading the numbers against the rules above:
   the customers present in the snapshot, not to the whole customer base.
 * The projected completion is a naive single-machine projection built before scheduling; the
   scheduler's `expected_completion` is authoritative once a schedule exists.
-* The API endpoints that expose scores, explanations and the preview are not implemented yet.
+* Endpoints exist for the queue (`GET /api/v1/orders`), the explanation
+  (`GET /api/v1/orders/{id}/explanation`), machine options, overrides/expedites and the preview
+  (`app/api/v1/orders.py`, `priority_config.py`), but no service yet runs the end-to-end
+  `PlanningPipeline` (`app/engines/pipeline.py`, `docs/SCHEDULING_ENGINE.md` §2.1) to produce and
+  persist a planning run; `app/workers` is empty.

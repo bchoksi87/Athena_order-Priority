@@ -98,6 +98,7 @@ assigns it). Entries are sorted by `(machine_id, setup_start)` and numbered
 | `no_eligible_machine` | No machine passes the hard constraints, or the forced/slot-locked machine is not usable in this run |
 | `no_calendar` | Eligible machines exist but none has a calendar |
 | `missing_cycle_time` | Run time unknown on every usable machine |
+| `data_quality` | Added by `app/engines/pipeline.py::SchedulerAdapter`, not by the scheduler itself: orders with a *blocking* data-quality issue are withheld from the scheduler and reported with their issue messages (§2.1) |
 
 `machine_recommendations[order_id]` holds the Phase 35 `MachineRecommendation` for the order's
 first placed (or failed) operation; `metrics` and `quality` are computed last (§9).
@@ -110,6 +111,31 @@ first placed (or failed) operation; `metrics` and `quality` are computed last (�
 `PlanningSnapshot`, priority results, calendars and a constraint engine and returns dataclasses;
 the same call is used for live planning, simulation and tests. All datetimes are timezone-aware
 UTC (`ensure_utc`), durations are minutes.
+
+### 2.1 The planning pipeline (`app/engines/pipeline.py`)
+
+`PlanningPipeline(clock, factors=None, scheduler_name="rule_based", registry=None,
+data_quality_engine=None).run(snapshot, system_config, previous_entries=None) -> PipelineResult`
+is the pure-engine flow the services, API and CLI are meant to call — still without persistence:
+
+```
+data_quality → calendars → constraints → priority_context → priority → schedule
+→ quality → kpis → capacity (weekly, per machine group) → bottlenecks → alerts
+```
+
+Each stage is timed (`PipelineResult.timings`, seconds, plus `total`) and logged as
+`pipeline.stage` with the `run_id` bound. The scheduler is wrapped in a `SchedulerAdapter` that
+forwards `previous_entries` when the wrapped scheduler accepts it (warning otherwise) and applies
+the **data-quality gate**: orders with a blocking `DataQualityIssue` keep their priority result
+(they stay in the queue with their blockers) but are withheld from the scheduler and come back as
+`UnscheduledItem(reason_code="data_quality")`, so the schedule accounts for every open order.
+`PipelineResult` carries the snapshot, DQ report, calendars, priorities, schedule, KPIs,
+capacity, bottlenecks, alerts, the profile/config ids and versions, the scheduler name/version
+and `dq_excluded_order_ids`; `summary()` yields the numbers an `optimization_runs` row needs.
+`PlanningPipeline.simulate(...)` builds a `SimulationEngine` from the same components (§12) and
+`explain_order(result, order_id)` assembles the Phase 34/35 view — priority explanation, placed
+entries with their reasons, unscheduled items and data-quality messages — from the objects it
+returns, never from independent text.
 
 ---
 
@@ -170,7 +196,11 @@ set). It holds no snapshot state; every call receives the snapshot and the insta
 Before hard constraints run, `candidate_machines(op, order, snapshot)` picks the plausible set, in
 precedence: `op.eligible_machine_ids` (explicit ERP list) → `order.required_machine_id` →
 `op.machine_group` or `order.machine_group` → every machine supporting `op.operation_type`.
-Candidates are sorted by `(preferred_rank, machine_id)`; `evaluate_eligibility` returns
+The order-level fields (`required_machine_id`, `machine_group`, and `tooling_requirement`) describe
+the order's *primary* process and are applied only to operations whose `operation_type` equals
+`order.process_type` (`hard.is_primary_operation`; every operation counts as primary when the
+order's process type is `OTHER`), so the deburring step of a CNC order is never pinned to the CNC
+machine. Candidates are sorted by `(preferred_rank, machine_id)`; `evaluate_eligibility` returns
 `EligibilityResult(eligible_machine_ids, rejected: machine_id → [Violation])` — every constraint
 is evaluated so a rejected machine carries all of its reasons.
 
@@ -183,14 +213,14 @@ Engine reports it) instead of silently blocking.
 | Key | Checks | Data read |
 |---|---|---|
 | `process_capability` | `machine.supports_process(op.operation_type)` (own process or `compatible_processes`) | machine, operation |
-| `explicit_eligibility` | machine in `op.eligible_machine_ids` when set; equals `order.required_machine_id` when set; equals `op.machine_id` while the operation is IN_PROGRESS (otherwise `op.machine_id` is a soft preference) | operation, order |
-| `machine_group` | machine group equals `op.machine_group` (else `order.machine_group`) unless an explicit list exists | operation, order, machine |
+| `explicit_eligibility` | machine in `op.eligible_machine_ids` when set; equals `order.required_machine_id` when set (primary operations only); equals `op.machine_id` while the operation is IN_PROGRESS (otherwise `op.machine_id` is a soft preference) | operation, order |
+| `machine_group` | machine group equals `op.machine_group` (else, for primary operations, `order.machine_group`) unless an explicit list exists | operation, order, machine |
 | `material_compatibility` | `machine.compatible_materials` (when non-empty) must contain the material; `material.compatible_machine_ids` (when non-empty) must contain the machine | operation/order material, machine, material |
-| `tooling_compatibility` | every required tool with a known `compatible_machine_ids` must list the machine | `op.tooling_ids` else `order.tooling_requirement`, tooling |
-| `machine_operable` | status AVAILABLE/RUNNING; MAINTENANCE only with a known downtime end after `at` (the calendar removes the window); DOWN/OFFLINE rejected, `resolves_at` in details when known | machine status, downtime |
+| `tooling_compatibility` | every required tool with a known `compatible_machine_ids` must list the machine | `op.tooling_ids`, else `order.tooling_requirement` for primary operations only (`required_tooling_ids`), tooling |
+| `machine_operable` | status AVAILABLE/RUNNING passes; DOWN, OFFLINE or MAINTENANCE passes **only** when one of the machine's downtime windows ends after `at` (the calendar removes the window and the scheduler starts work at the return); otherwise rejected with "… with no scheduled return" | machine status, downtime |
 | `part_size` | sorted part dimensions (`order.attributes["part_size_mm"]` or `part_length/width/height_mm`) fit the sorted `machine.max_part_size_mm` | order attributes, machine |
 | `quantity_restriction` | `machine.attributes["min_batch_qty"|"max_batch_qty"]` bound the pending quantity | machine attributes |
-| `locked_machine_assignment` | an active ORDER/MACHINE lock naming a machine, or an active `LOCK_MACHINE_ASSIGNMENT` override, pins the order (locks beat overrides; latest wins) | snapshot locks/overrides |
+| `locked_machine_assignment` | an active ORDER/MACHINE lock naming a machine, or an active `LOCK_MACHINE_ASSIGNMENT` override, pins the order (locks beat overrides; latest wins); the pin applies only to operations the pinned machine can perform — other steps of the route stay free | snapshot locks/overrides |
 
 ### 4.3 Soft constraints and the setup estimate (`soft.py`)
 
@@ -250,8 +280,10 @@ resolves_at, details)`):
    WAITING_TOOLING;
 7. `depends_on_order_ids` still open (cancelled dependency → OTHER_CONSTRAINT) and an unfinished
    `prerequisite_operation_id` → WAITING_PREVIOUS_OPERATION (`resolves_at` from estimated ends);
-8. no eligible machine, or every eligible machine unavailable now → MACHINE_UNAVAILABLE
-   (`resolves_at` = earliest return).
+8. no eligible machine at all (candidate rejections summarised, e.g. `machine_operable (2)`), or
+   every eligible machine unavailable at `at` (down with a known return, or before
+   `available_from`) → MACHINE_UNAVAILABLE; in the second case `resolves_at` = the earliest
+   eligible machine's return.
 
 The single state is the highest-precedence blocker in `READINESS_PRECEDENCE`:
 `ON_HOLD > QUALITY_HOLD > WAITING_APPROVAL > WAITING_MATERIAL > WAITING_TOOLING >
@@ -267,7 +299,7 @@ blocks; only positive evidence does.
 
 | Spec step | Implementation |
 |---|---|
-| 1. Remove blocked orders | `candidates.select_candidates`: readiness of every order from `assessment_map`; orders with *real* blockers become `UnscheduledItem("blocked")`. Two states are handled structurally, not as blockers: WAITING_PREVIOUS_OPERATION (dependencies are placed first and their completion is the release) and MACHINE_UNAVAILABLE (calendars/machine states model downtime). With `schedule_blocked_orders=True` and every blocker carrying `resolves_at`, the order is kept with `release = max(resolves_at)` and a `blocker_note` in its reason. Non-schedulable statuses, missing priorities and `max_orders_per_run` overflow are also removed here. |
+| 1. Remove blocked orders | `candidates.select_candidates`: readiness of every order from `assessment_map`; orders with *real* blockers become `UnscheduledItem("blocked")`. Two states are handled structurally, not as blockers: WAITING_PREVIOUS_OPERATION (dependencies are placed first and their completion is the release) and MACHINE_UNAVAILABLE (calendars/machine states model downtime). With `schedule_blocked_orders=True` and every blocker carrying `resolves_at`, the order is kept with `release = max(resolves_at)` and a `blocker_note` in its reason. Non-schedulable statuses, missing priorities and `max_orders_per_run` overflow are also removed here. Inside `PlanningPipeline` (§2.1) orders with a *blocking* data-quality issue are withheld before this step and reported as `data_quality`. |
 | 2. Calculate priority score | Done beforehand by the priority engine; the scheduler only reads `score`, `rank`, `forced_next`. |
 | 3. Sort eligible orders | Global processing order by bucket: (0) orders with an operation IN_PROGRESS on a machine, (1) order-locked orders in lock creation order, (2) `forced_next`, (3) everything else by `(-score, due_date, order_id)`. SEQUENCE locks then re-assign their orders to the positions they occupy, in the locked order (`apply_sequence_locks`). |
 | 4. Assign orders to compatible machines | Per pending operation, in sequence: `eligibility` (cached per operation) → usable machines (initialised state, not frozen) → `rank_machines` (§8) → recommended machine, unless a forced/slot-locked machine is required. |
@@ -526,8 +558,9 @@ requires_approval, triggers)`:
 `requires_approval = should_replan and (config.require_approval (default True) or
 frozen_violations > 0 or max_moves_exceeded or changed orders ≥ significant_change_orders (5))`.
 `compare(current, proposed)` returns `compare_schedules` plus the change list for the planner's
-old-vs-new view. The worker that would run this loop is not implemented yet (`app/workers` is
-empty; see `docs/DEPLOYMENT.md`).
+old-vs-new view. Nothing runs this loop automatically yet: `app/workers` is empty and
+`python -m app.cli worker` is a stub that exits with "background worker not yet implemented"
+(`docs/DEPLOYMENT.md` §1).
 
 ---
 
@@ -543,7 +576,9 @@ scenarios, profile, config, previous_entries=None) -> SimulationResult`:
    `apply_scenarios`; profile and config flow through (`weight_change` returns a new profile);
    then `plan(clone)` — the same code path, so a difference is caused by the scenario alone;
 3. **diff** = `diff_schedules(...)`. The input snapshot is never mutated and nothing is persisted
-   as a schedule version.
+   as a schedule version. `PlanningPipeline.simulate` (§2.1) builds this engine from the
+   pipeline's own priority engine and scheduler, wrapped in the data-quality gate, so a what-if
+   baseline is exactly what `run` would plan.
 
 Scenarios are Pydantic models discriminated on `kind` (`scenarios.py::Scenario`); unknown
 references raise `ValidationError` rather than silently doing nothing:
@@ -551,7 +586,7 @@ references raise `ValidationError` rather than silently doing nothing:
 | `kind` | Effect on the clone |
 |---|---|
 | `machine_down` | `unplanned_downtime` window (`start` default now; `end` or `duration_hours`); status left as reported |
-| `add_machine` | deep copy of an existing machine as a fresh idle one (own id, calendar, `available_from`) |
+| `add_machine` | deep copy of an existing machine as a fresh idle one (own id, calendar, `available_from`); tool and material releases keyed on the source machine (`compatible_machine_ids`) are extended to the clone |
 | `extra_working_day` | date added to `extra_working_days` of one or `"all"` calendars |
 | `extra_shift` | local start–end on a date → absolute overtime window on one/all calendars |
 | `urgent_orders` | inline orders (route steps) or clones of existing orders with a new due date, injected as NEW at `as_of`, expedited by default with profile defaults |
@@ -601,7 +636,9 @@ orders, 12,000 operations over 5 routings, 45 machines in 4 groups, 800 customer
 
 The priority-context build (readiness for every order, per-operation candidate enumeration,
 projections, batching index) dominates the end-to-end time at this scale and is the first target
-for optimisation; the scheduler itself is inside its budget.
+for optimisation; the scheduler itself is inside its budget. `PlanningPipeline` records the
+per-stage seconds in `PipelineResult.timings` and logs `pipeline.stage`, so this split is visible
+on every real run.
 
 ---
 
@@ -621,8 +658,12 @@ Limitations of the code as it stands:
 * CP-SAT re-sequences per machine with fixed machine assignment; it never moves a job to another
   machine and works on at most `top_k_machines`.
 * Scheduler utilisation and the quality component are horizon-relative (see §9.2).
-* The service layer (`app/services`), the API endpoints and the worker that would call these
-  engines are not implemented yet; the engines are complete and tested in isolation.
+* `PlanningPipeline` (§2.1) orchestrates the engines without persistence, and application
+  services / API routers exist for queries, overrides, locks, expedites, configuration, customer
+  rules, alerts, audit, data quality and users — but no service or endpoint yet runs the pipeline
+  to generate, approve or publish a schedule *version* (`/schedule/generate`, `/schedule/simulate`,
+  `/schedule/approve`, `/schedule/publish`, `/schedule/versions`, `/analytics/*` and `/sync/*` of
+  contract §9 are missing), and the background worker is a CLI stub.
 
 Roadmap (spec Phase 6 "VERSION 2", Phase 19; `docs/REQUIREMENTS.md` F-01/F-02): extend the CP-SAT
 model to machine choice within a group with `ObjectiveWeights` as the objective (on-time delivery,

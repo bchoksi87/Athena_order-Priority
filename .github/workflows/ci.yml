@@ -54,8 +54,7 @@ jobs:
       - name: Unit + engine + integration tests
         run: pytest -q -m "not slow" --cov=app --cov-report=xml
       - name: Simulation / stress tests
-        run: pytest -q -m "slow" --timeout=900 || pytest -q -m "slow"
-        continue-on-error: false
+        run: pytest -q -m "slow"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
