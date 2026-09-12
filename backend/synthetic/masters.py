@@ -112,8 +112,7 @@ def build_materials(rng: random.Random, profile: ScaleProfile, as_of: datetime) 
                 templates.append(template)
                 seen.add(template.material_class)
     materials: list[Material] = []
-    shortage_count = max(1, round(len(templates) * 0.12))
-    shortage_codes = {t.code for t in rng.sample(templates, shortage_count)}
+    shortage_codes = _shortage_codes(rng, templates)
     for template in templates:
         available = round(rng.uniform(80.0, 900.0), 1)
         reserved = round(available * rng.uniform(0.0, 0.45), 1)
@@ -144,6 +143,27 @@ def build_materials(rng: random.Random, profile: ScaleProfile, as_of: datetime) 
             )
         )
     return materials
+
+
+_METAL_CLASSES = ("aluminium", "steel")
+_AM_CLASSES = ("resin", "polymer_powder", "metal_powder", "filament")
+
+
+def _shortage_codes(rng: random.Random, templates: list[catalog.MaterialTemplate]) -> set[str]:
+    """~12 % of materials are out of stock: at least one machining metal and one AM feedstock.
+
+    Stratifying the shortages keeps ``MATERIAL_WAITING`` lines of both the CNC
+    and the additive side on a material of their own class.
+    """
+    count = max(2, round(len(templates) * 0.12))
+    picked: list[catalog.MaterialTemplate] = []
+    for classes in (_METAL_CLASSES, _AM_CLASSES):
+        pool = [t for t in templates if t.material_class in classes]
+        if pool:
+            picked.append(rng.choice(pool))
+    rest = [t for t in templates if t not in picked]
+    picked.extend(rng.sample(rest, max(0, min(len(rest), count - len(picked)))))
+    return {t.code for t in picked}
 
 
 # ---------------------------------------------------------------------------

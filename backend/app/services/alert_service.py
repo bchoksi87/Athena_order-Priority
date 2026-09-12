@@ -91,7 +91,9 @@ class AlertService(Service):
                 f"alert '{alert_id}' was already acknowledged by {current.acknowledged_by}",
                 details={
                     "acknowledged_by": current.acknowledged_by,
-                    "acknowledged_at": current.acknowledged_at,
+                    "acknowledged_at": current.acknowledged_at.isoformat()
+                    if current.acknowledged_at
+                    else None,
                 },
             )
         updated = self._alerts.acknowledge(alert_id, user_id=actor_id(user), at=self.now())

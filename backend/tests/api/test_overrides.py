@@ -456,7 +456,9 @@ def test_order_and_sequence_locks(seeded: Seeded) -> None:
     )
     assert clash.status_code in (404, 409)
     assert seeded.get("/schedule/locks", lock_type="sequence")[0]["lock_id"] == sequence.json()["lock_id"]
-    assert seeded.get("/schedule/locks", order_id=ids[1])[0]["lock_id"] == sequence.json()["lock_id"]
+    assert sequence.json()["lock_id"] in {
+        lk["lock_id"] for lk in seeded.get("/schedule/locks", order_id=ids[1])
+    }
 
     bad_window = seeded.post(
         "/schedule/lock",

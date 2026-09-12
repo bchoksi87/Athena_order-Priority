@@ -12,9 +12,11 @@ from typing import Literal
 
 from app.domain.enums import CustomerTier
 from synthetic.plant import (
+    AM_ROUTE_WEIGHTS,
     AM_ROUTES,
     AM_TECHNOLOGIES,
     ASSEMBLY_ROUTE,
+    CNC_ROUTE_WEIGHTS,
     CNC_ROUTES,
     DEFAULT_CALENDAR_ID,
     GROUPS_BY_PROCESS,
@@ -47,8 +49,15 @@ class ScaleProfile:
     materials: int
     tooling: int
     machines_per_group: dict[str, int]
+    #: multiplier on lot sizes: a 12-machine shop with 300 lines a month runs
+    #: fewer, larger lots than a 5,000-line job shop (see ``synthetic.generator``)
+    lot_multiplier: float = 1.0
 
 
+# Machine counts per group and scale. Sized against the open order book so that
+# the plant runs at ~85-90 % of its 30-day calendar capacity with the 5-axis
+# cell and the CMM room as the bottlenecks (see the calibration notes in
+# ``synthetic.generator``). Large is medium x4 (20,000 vs 5,000 lines).
 _SMALL_MACHINES = {
     "CNC3": 2,
     "CNC5": 1,
@@ -64,39 +73,25 @@ _SMALL_MACHINES = {
 }
 
 _MEDIUM_MACHINES = {
-    "CNC3": 9,
-    "CNC5": 5,
-    "LATHE": 4,
-    "AM_SLA": 3,
+    "CNC3": 14,
+    "CNC5": 4,
+    "LATHE": 6,
+    "AM_SLA": 2,
     "AM_MJF": 2,
-    "AM_FDM": 3,
+    "AM_FDM": 2,
     "AM_DMLS": 2,
-    "DEBURR": 4,
-    "CMM": 3,
-    "SURF": 3,
+    "DEBURR": 6,
+    "CMM": 5,
+    "SURF": 4,
     "AMPOST": 3,
-    "ASSY": 2,
-    "PACK": 2,
+    "ASSY": 3,
+    "PACK": 4,
 }
 
-_LARGE_MACHINES = {
-    "CNC3": 24,
-    "CNC5": 14,
-    "LATHE": 11,
-    "AM_SLA": 8,
-    "AM_MJF": 5,
-    "AM_FDM": 8,
-    "AM_DMLS": 5,
-    "DEBURR": 11,
-    "CMM": 8,
-    "SURF": 8,
-    "AMPOST": 8,
-    "ASSY": 5,
-    "PACK": 5,
-}
+_LARGE_MACHINES = {group: count * 4 for group, count in _MEDIUM_MACHINES.items()}
 
 SCALES: dict[str, ScaleProfile] = {
-    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES),
+    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES, lot_multiplier=3.0),
     "medium": ScaleProfile("medium", 800, 5_000, 33, 40, _MEDIUM_MACHINES),
     "large": ScaleProfile("large", 800, 20_000, 33, 40, _LARGE_MACHINES),
 }
@@ -343,9 +338,11 @@ SURFACE_FINISHES: tuple[str, ...] = (
 __all__ = [
     "ACCOUNT_MANAGERS",
     "AM_ROUTES",
+    "AM_ROUTE_WEIGHTS",
     "AM_TECHNOLOGIES",
     "ASSEMBLY_ROUTE",
     "CNC_ROUTES",
+    "CNC_ROUTE_WEIGHTS",
     "CUSTOMER_CATEGORIES",
     "CUSTOMER_FORMS",
     "CUSTOMER_PREFIXES",

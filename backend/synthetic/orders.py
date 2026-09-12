@@ -25,22 +25,25 @@ from app.domain.models import Customer, Machine, Material, Operation, Order, Too
 from synthetic import catalog
 from synthetic.catalog import ScaleProfile
 
-#: Order status mix for the open + recently closed book (weights sum to 1.0).
+#: Order status mix for the month's order book (weights sum to 1.0). About 18 %
+#: of the lines are already completed / packed / shipped: they are history for
+#: the OTD and customer screens and carry no load; the remaining ~82 % are the
+#: open book the capacity calibration is based on (see ``synthetic.generator``).
 STATUS_MIX: tuple[tuple[OrderStatus, float], ...] = (
-    (OrderStatus.NEW, 0.10),
-    (OrderStatus.RELEASED, 0.24),
-    (OrderStatus.PLANNED, 0.14),
-    (OrderStatus.SCHEDULED, 0.10),
-    (OrderStatus.IN_PRODUCTION, 0.15),
+    (OrderStatus.NEW, 0.09),
+    (OrderStatus.RELEASED, 0.205),
+    (OrderStatus.PLANNED, 0.12),
+    (OrderStatus.SCHEDULED, 0.09),
+    (OrderStatus.IN_PRODUCTION, 0.14),
     (OrderStatus.PARTIALLY_COMPLETED, 0.05),
     (OrderStatus.QUALITY_INSPECTION, 0.02),
     (OrderStatus.REWORK, 0.02),
-    (OrderStatus.ON_HOLD, 0.04),
+    (OrderStatus.ON_HOLD, 0.035),
     (OrderStatus.MATERIAL_WAITING, 0.03),
     (OrderStatus.TOOLING_WAITING, 0.01),
-    (OrderStatus.COMPLETED, 0.04),
-    (OrderStatus.PACKED, 0.02),
-    (OrderStatus.SHIPPED, 0.04),
+    (OrderStatus.COMPLETED, 0.06),
+    (OrderStatus.PACKED, 0.03),
+    (OrderStatus.SHIPPED, 0.09),
 )
 
 _TIER_ORDER_WEIGHT: dict[CustomerTier, float] = {
@@ -51,7 +54,20 @@ _TIER_ORDER_WEIGHT: dict[CustomerTier, float] = {
 }
 
 _LATHE_FAMILIES = frozenset({"Shaft", "Bushing", "Coupling", "Spacer", "Adapter"})
-_FIVE_AXIS_FAMILIES = frozenset({"Impeller", "Manifold", "Valve Body", "Housing"})
+_FIVE_AXIS_FAMILIES = frozenset({"Impeller", "Manifold", "Valve Body", "Housing", "Nozzle", "Enclosure"})
+_FIVE_AXIS_SHARE = 0.8  # share of those families that is actually programmed for the 5-axis cell
+#: Material class mix of CNC parts (weights): a mostly aluminium / steel shop
+#: with a titanium, engineering-plastic, brass and Inconel minority.
+_CNC_MATERIAL_CLASSES: tuple[str, ...] = (
+    "aluminium",
+    "steel",
+    "titanium",
+    "polymer",
+    "copper_alloy",
+    "superalloy",
+)
+_CNC_MATERIAL_WEIGHTS: tuple[float, ...] = (3.0, 3.0, 1.0, 1.0, 1.0, 0.5)
+_AM_SHARE = 0.30  # share of part lines that are 3D-printed rather than machined
 _DRAWING_UNAPPROVED_SHARE = 0.02
 _ASSEMBLY_SHARE = 0.04
 _HOLD_REASONS = ("customer request", "credit hold", "engineering change pending", "awaiting PO amendment")
@@ -73,10 +89,15 @@ class OrderBuildContext:
     materials_by_class: dict[str, list[Material]] = field(default_factory=dict)
     tooling_by_group: dict[str, list[Tooling]] = field(default_factory=dict)
     customer_weights: list[float] = field(default_factory=list)
+    #: material id -> groups with at least one machine that accepts it
+    groups_for_material: dict[str, set[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for machine in self.machines:
             self.machines_by_group.setdefault(machine.machine_group, []).append(machine)
+            accepted = machine.compatible_materials or {m.material_id for m in self.materials}
+            for material_id in accepted:
+                self.groups_for_material.setdefault(material_id, set()).add(machine.machine_group)
         for material in self.materials:
             self.materials_by_class.setdefault(material.material_type, []).append(material)
         machine_group = {m.machine_id: m.machine_group for m in self.machines}
@@ -89,13 +110,29 @@ class OrderBuildContext:
                         bucket.append(tool)
         self.customer_weights = [_TIER_ORDER_WEIGHT[c.customer_tier] for c in self.customers]
 
-    def group_for(self, process: ProcessType, preferred: str | None = None) -> str | None:
+    def group_for(
+        self, process: ProcessType, preferred: str | None = None, material_id: str | None = None
+    ) -> str | None:
+        """First group (preferred first) that has machines and, if given, accepts ``material_id``."""
         candidates = [preferred] if preferred else []
         candidates.extend(catalog.GROUPS_BY_PROCESS.get(process, ()))
+        compatible = self.groups_for_material.get(material_id) if material_id is not None else None
         for group in candidates:
-            if group and self.machines_by_group.get(group):
-                return group
+            if not group or not self.machines_by_group.get(group):
+                continue
+            if compatible is not None and group not in compatible:
+                continue
+            return group
         return None
+
+    def shortage_materials(self, classes: tuple[str, ...] | None = None) -> list[Material]:
+        """Materials out of stock with a receipt pending, optionally restricted to ``classes``."""
+        pool = (
+            self.materials
+            if classes is None
+            else [m for c in classes for m in self.materials_by_class.get(c, ())]
+        )
+        return [m for m in pool if m.available_quantity <= 0 and m.incoming_quantity > 0]
 
 
 def _pick_status(rng: random.Random) -> OrderStatus:
@@ -109,24 +146,28 @@ def _pick_status(rng: random.Random) -> OrderStatus:
 
 
 def _due_offset_days(rng: random.Random, closed: bool) -> int:
+    """Due date offset from ``as_of``: ~8 % overdue, ~11 % due today/tomorrow, rest 2-30 days out."""
     if closed:
         return -rng.randint(0, 10)
     roll = rng.random()
-    if roll < 0.06:
-        return -rng.randint(1, 5)
-    if roll < 0.12:
+    if roll < 0.08:
+        return -rng.randint(1, 6)
+    if roll < 0.14:
         return 0
-    if roll < 0.17:
+    if roll < 0.19:
         return 1
     return round(rng.triangular(2.0, 30.0, 8.0))
 
 
-def _quantity(rng: random.Random, kind: str) -> float:
+def _quantity(rng: random.Random, kind: str, multiplier: float = 1.0) -> float:
+    """Lot sizes: log-normal for CNC (median ~12) and printed parts (median ~6, a few big builds)."""
     if kind == "am":
-        return float(rng.randint(1, 40))
-    if kind == "assembly":
-        return float(rng.randint(1, 25))
-    return float(max(1, round(math.exp(rng.gauss(2.6, 1.0)))))
+        pieces = min(60.0, math.exp(rng.gauss(1.8, 0.9)))
+    elif kind == "assembly":
+        pieces = float(rng.randint(1, 12))
+    else:
+        pieces = math.exp(rng.gauss(2.5, 1.0))
+    return float(max(1, round(pieces * multiplier)))
 
 
 class OrderFactory:
@@ -151,7 +192,7 @@ class OrderFactory:
             for line_no in range(1, lines + 1):
                 if len(orders) >= total - assembly_count:
                     break
-                kind = "am" if self._rng.random() < 0.35 else "cnc"
+                kind = "am" if self._rng.random() < _AM_SHARE else "cnc"
                 order, ops = self._build_line(customer, order_no, line_no, kind)
                 orders.append(order)
                 operations.extend(ops)
@@ -172,32 +213,30 @@ class OrderFactory:
         return self._rng.choices(self._ctx.customers, weights=self._ctx.customer_weights)[0]
 
     def _pick_material(self, kind: str, technology: str | None) -> Material | None:
-        classes: tuple[str, ...]
         if kind == "am" and technology is not None:
-            classes = (catalog.AM_TECHNOLOGIES[technology][1],)
+            material_class = catalog.AM_TECHNOLOGIES[technology][1]
         else:
-            classes = (
-                "aluminium",
-                "aluminium",
-                "steel",
-                "steel",
-                "titanium",
-                "polymer",
-                "copper_alloy",
-                "superalloy",
-            )
-        pool = self._ctx.materials_by_class.get(self._rng.choice(classes))
+            material_class = self._rng.choices(_CNC_MATERIAL_CLASSES, weights=_CNC_MATERIAL_WEIGHTS)[0]
+        pool = self._ctx.materials_by_class.get(material_class)
         if not pool:
             pool = self._ctx.materials
         return self._rng.choice(pool) if pool else None
 
-    def _cnc_group(self, family: str) -> str | None:
+    def _cnc_group(self, family: str, material: Material | None) -> str | None:
+        """Turned families go to the lathes, complex families mostly to 5-axis, the rest to 3-axis.
+
+        The preferred group is only used when one of its machines accepts the
+        part's material; otherwise the route falls back to the next capable
+        group (e.g. a brass impeller is milled on a 3-axis VMC, not a 5-axis
+        cell that is qualified for metals only).
+        """
         preferred = "CNC3"
         if family in _LATHE_FAMILIES:
             preferred = "LATHE"
-        elif family in _FIVE_AXIS_FAMILIES and self._rng.random() < 0.6:
+        elif family in _FIVE_AXIS_FAMILIES and self._rng.random() < _FIVE_AXIS_SHARE:
             preferred = "CNC5"
-        return self._ctx.group_for(ProcessType.CNC_MACHINING, preferred)
+        material_id = material.material_id if material is not None else None
+        return self._ctx.group_for(ProcessType.CNC_MACHINING, preferred, material_id)
 
     def _build_line(
         self, customer: Customer, order_no: str, line_no: int, kind: str
@@ -214,27 +253,28 @@ class OrderFactory:
                 "FDM",
             )
         material = self._pick_material(kind, technology) if kind != "assembly" else None
-        quantity = _quantity(rng, kind)
+        quantity = _quantity(rng, kind, self._ctx.profile.lot_multiplier)
+        status = _pick_status(rng)
+        closed = status in (OrderStatus.COMPLETED, OrderStatus.PACKED, OrderStatus.SHIPPED)
+        if status == OrderStatus.MATERIAL_WAITING and material is not None:
+            # Swap in an out-of-stock material of the *same class* so the route stays
+            # consistent with the machine groups' material compatibility; when none
+            # is short the ERP flag alone marks the line as waiting for material.
+            shortage = self._ctx.shortage_materials((material.material_type,))
+            if shortage:
+                material = rng.choice(shortage)
         route: tuple[ProcessType, ...]
         if kind == "assembly":
             route = catalog.ASSEMBLY_ROUTE
             primary_group = self._ctx.group_for(ProcessType.ASSEMBLY)
         elif technology is not None:
-            route = rng.choice(catalog.AM_ROUTES)
+            route = rng.choices(catalog.AM_ROUTES, weights=catalog.AM_ROUTE_WEIGHTS)[0]
             primary_group = self._ctx.group_for(
                 ProcessType.ADDITIVE_3D_PRINTING, catalog.AM_TECHNOLOGIES[technology][0]
             )
         else:
-            route = rng.choice(catalog.CNC_ROUTES)
-            primary_group = self._cnc_group(family)
-        status = _pick_status(rng)
-        closed = status in (OrderStatus.COMPLETED, OrderStatus.PACKED, OrderStatus.SHIPPED)
-        if status == OrderStatus.MATERIAL_WAITING:
-            shortage = [
-                m for m in self._ctx.materials if m.available_quantity <= 0 and m.incoming_quantity > 0
-            ]
-            if shortage:
-                material = rng.choice(shortage)
+            route = rng.choices(catalog.CNC_ROUTES, weights=catalog.CNC_ROUTE_WEIGHTS)[0]
+            primary_group = self._cnc_group(family, material)
         order_id = f"{order_no}-{line_no:02d}"
         setup_family = f"{material.material_id.removeprefix('MAT-')}-{family}" if material else family
         operations = self._build_operations(order_id, route, primary_group, material, quantity, setup_family)
@@ -329,7 +369,13 @@ class OrderFactory:
         ops: list[Operation] = []
         previous: Operation | None = None
         for index, process in enumerate(route):
-            group = primary_group if index == 0 else self._ctx.group_for(process)
+            if index == 0:
+                group = primary_group
+            elif process == ProcessType.FINISHING:
+                # printed parts are hand-finished either in the AM post cell or the deburr bay
+                group = self._ctx.group_for(process, rng.choice(("AMPOST", "DEBURR")))
+            else:
+                group = self._ctx.group_for(process)
             timing = catalog.PROCESS_TIMING[process]
             cycle = round(
                 rng.uniform(timing.cycle_min, timing.cycle_max) / (1.0 + math.log10(max(quantity, 1.0))), 2

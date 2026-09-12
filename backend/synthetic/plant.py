@@ -58,7 +58,7 @@ MACHINE_GROUPS: dict[str, MachineGroupSpec] = {
         "TL-250",
         ProcessType.CNC_MACHINING,
         (),
-        ("aluminium", "steel", "copper_alloy", "polymer"),
+        ("aluminium", "steel", "titanium", "superalloy", "copper_alloy", "polymer"),
         "default",
         16.0,
         "Bay B",
@@ -222,6 +222,10 @@ CNC_ROUTES: tuple[tuple[ProcessType, ...], ...] = (
     ),
 )
 
+#: Relative frequency of each CNC route: most parts ship as-machined or anodised,
+#: a minority carry a sub-assembly step (inserts, helicoils, bushings).
+CNC_ROUTE_WEIGHTS: tuple[float, ...] = (0.50, 0.35, 0.15)
+
 AM_ROUTES: tuple[tuple[ProcessType, ...], ...] = (
     (
         ProcessType.ADDITIVE_3D_PRINTING,
@@ -238,6 +242,8 @@ AM_ROUTES: tuple[tuple[ProcessType, ...], ...] = (
     ),
 )
 
+AM_ROUTE_WEIGHTS: tuple[float, ...] = (0.4, 0.6)
+
 ASSEMBLY_ROUTE: tuple[ProcessType, ...] = (ProcessType.ASSEMBLY, ProcessType.INSPECTION, ProcessType.PACKING)
 
 
@@ -249,17 +255,23 @@ class ProcessTiming:
     cycle_max: float
 
 
+#: Setup and per-unit cycle minutes per process. Cycle minutes are *before* the
+#: batch-size discount applied by the order factory (``/ (1 + log10(qty))``),
+#: so a 15-piece CNC job with a nominal 20 min/unit cycle runs ~9 min/unit.
+#: Inspection is sample-based CMM work (a first-article check plus a few
+#: pieces), surface treatment and packing are per-piece handling on top of a
+#: batch setup — not full per-piece process time.
 PROCESS_TIMING: dict[ProcessType, ProcessTiming] = {
-    ProcessType.CNC_MACHINING: ProcessTiming(20.0, 120.0, 2.0, 45.0),
-    ProcessType.ADDITIVE_3D_PRINTING: ProcessTiming(15.0, 45.0, 10.0, 180.0),
-    ProcessType.SUPPORT_REMOVAL: ProcessTiming(5.0, 10.0, 3.0, 15.0),
-    ProcessType.DEBURRING: ProcessTiming(5.0, 15.0, 1.0, 8.0),
-    ProcessType.FINISHING: ProcessTiming(5.0, 20.0, 3.0, 20.0),
-    ProcessType.HEAT_TREATMENT: ProcessTiming(30.0, 60.0, 5.0, 20.0),
-    ProcessType.SURFACE_TREATMENT: ProcessTiming(15.0, 45.0, 2.0, 10.0),
-    ProcessType.INSPECTION: ProcessTiming(10.0, 30.0, 1.0, 10.0),
-    ProcessType.ASSEMBLY: ProcessTiming(10.0, 30.0, 5.0, 40.0),
-    ProcessType.PACKING: ProcessTiming(5.0, 10.0, 0.5, 3.0),
+    ProcessType.CNC_MACHINING: ProcessTiming(20.0, 90.0, 1.5, 30.0),
+    ProcessType.ADDITIVE_3D_PRINTING: ProcessTiming(15.0, 45.0, 10.0, 90.0),
+    ProcessType.SUPPORT_REMOVAL: ProcessTiming(5.0, 10.0, 2.0, 8.0),
+    ProcessType.DEBURRING: ProcessTiming(5.0, 15.0, 0.8, 6.0),
+    ProcessType.FINISHING: ProcessTiming(5.0, 15.0, 2.0, 10.0),
+    ProcessType.HEAT_TREATMENT: ProcessTiming(30.0, 60.0, 3.0, 12.0),
+    ProcessType.SURFACE_TREATMENT: ProcessTiming(15.0, 40.0, 0.5, 3.0),
+    ProcessType.INSPECTION: ProcessTiming(5.0, 15.0, 0.5, 4.0),
+    ProcessType.ASSEMBLY: ProcessTiming(10.0, 30.0, 2.0, 12.0),
+    ProcessType.PACKING: ProcessTiming(5.0, 10.0, 0.3, 2.0),
     ProcessType.OTHER: ProcessTiming(10.0, 30.0, 1.0, 10.0),
 }
 
@@ -297,9 +309,11 @@ HOLIDAYS_2026: tuple[date, ...] = (
 
 __all__ = [
     "AM_ROUTES",
+    "AM_ROUTE_WEIGHTS",
     "AM_TECHNOLOGIES",
     "ASSEMBLY_ROUTE",
     "CNC_ROUTES",
+    "CNC_ROUTE_WEIGHTS",
     "DEFAULT_CALENDAR_ID",
     "GROUPS_BY_PROCESS",
     "HOLIDAYS_2026",
