@@ -26,6 +26,7 @@ import { VersionSelect } from "@/components/VersionSelect";
 import { humanize, PROCESS_TYPES } from "@/lib/constants";
 import { entryTone } from "@/lib/entryTone";
 import { formatHours, formatNumber } from "@/lib/formatters";
+import { formatWorkHours } from "@/lib/metricPairs";
 import { idleWindows, machineLines, type MachineLine } from "@/lib/scheduleGaps";
 import { formatDateTime, parseUtc, toDateKey } from "@/lib/time";
 import { useSearchState } from "@/lib/useSearchState";
@@ -179,7 +180,7 @@ export default function MachineSchedulePage() {
       <div className="grid grid-kpi">
         <KpiCard label="Machines shown" value={formatNumber(stats.machines)} tone="neutral" loading={query.isPending} hint={values.group || values.process || machineSet.length ? "filtered" : "whole plant"} />
         <KpiCard label="Jobs" value={formatNumber(stats.entries)} tone="running" loading={query.isPending} hint={view === "week" ? "in the 7-day window" : "on this day"} />
-        <KpiCard label="Busy hours" value={formatHours(stats.busy, 0)} tone="running" loading={query.isPending} hint="setup + run" />
+        <KpiCard label="Busy hours" value={formatWorkHours(stats.busy, 0)} tone="running" loading={query.isPending} hint="setup + run" />
         <KpiCard label="Late jobs" value={formatNumber(stats.late)} tone={stats.late > 0 ? "late" : "ready"} loading={query.isPending} />
         <KpiCard label="Locked" value={formatNumber(stats.locked)} tone={stats.locked > 0 ? "hold" : "neutral"} loading={query.isPending} hint="kept across replans" />
         <KpiCard label="Downtime windows" value={formatNumber(stats.downtime)} tone={stats.downtime > 0 ? "at-risk" : "ready"} loading={query.isPending} hint={`${stats.idle} idle gaps ≥ ${IDLE_MIN_MINUTES} min`} />

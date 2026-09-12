@@ -65,3 +65,41 @@ describe("GanttChart", () => {
     expect(screen.getAllByTestId("gantt-entry")).toHaveLength(120);
   });
 });
+
+describe("GanttChart compare mode", () => {
+  it("draws ghost bars for the baseline's moved and removed entries and marks moved / added bars", () => {
+    const current = [
+      makeEntry({ entry_id: "e1", operation_id: "op1", machine_id: "CNC-02" }), // moved from CNC-01
+      makeEntry({ entry_id: "e2", operation_id: "op2", machine_id: "CNC-01", start: "2026-09-11T14:00:00Z", end: "2026-09-11T16:00:00Z", setup_start: "2026-09-11T14:00:00Z" }), // unchanged
+      makeEntry({ entry_id: "e4", operation_id: "op4", machine_id: "CNC-02", start: "2026-09-12T08:00:00Z", end: "2026-09-12T10:00:00Z", setup_start: "2026-09-12T08:00:00Z" }), // added
+    ];
+    const baselineEntries = [
+      makeEntry({ entry_id: "e1", operation_id: "op1", machine_id: "CNC-01" }),
+      makeEntry({ entry_id: "e2", operation_id: "op2", machine_id: "CNC-01", start: "2026-09-11T14:00:00Z", end: "2026-09-11T16:00:00Z", setup_start: "2026-09-11T14:00:00Z" }),
+      makeEntry({ entry_id: "e3", operation_id: "op3", machine_id: "CNC-02", start: "2026-09-12T12:00:00Z", end: "2026-09-12T13:00:00Z", setup_start: "2026-09-12T12:00:00Z" }), // removed
+    ];
+    render(<GanttChart rows={rows} entries={current} baselineEntries={baselineEntries} baselineLabel="v3" start={start} end={end} zoom="day" showLegend />);
+    const ghosts = screen.getAllByTestId("gantt-ghost");
+    expect(ghosts).toHaveLength(2);
+    expect(ghosts.map((g) => g.getAttribute("data-entry-id")).sort()).toEqual(["e1", "e3"]);
+    expect(screen.getAllByTestId("gantt-ghost").find((g) => g.getAttribute("data-entry-id") === "e3")).toHaveClass("gantt-ghost-removed");
+    const bars = screen.getAllByTestId("gantt-entry");
+    const change = Object.fromEntries(bars.map((b) => [b.getAttribute("data-entry-id"), b.getAttribute("data-change")]));
+    expect(change).toEqual({ e1: "moved", e2: null, e4: "added" });
+    expect(screen.getByText("v3 (moved)")).toBeInTheDocument();
+    fireEvent.mouseEnter(ghosts[0]!, { clientX: 5, clientY: 5 });
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/vs v3/);
+  });
+
+  it("clusters touching tiny bars at low zoom", () => {
+    const tiny = Array.from({ length: 20 }, (_, i) => {
+      const s = new Date(Date.UTC(2026, 8, 11, 0, i * 6));
+      const e = new Date(s.getTime() + 5 * 60_000);
+      return makeEntry({ entry_id: `t${i}`, operation_id: `top${i}`, machine_id: "CNC-01", setup_start: s.toISOString(), start: s.toISOString(), end: e.toISOString() });
+    });
+    render(<GanttChart rows={rows} entries={tiny} start={start} end={end} zoom="fortnight" showLegend={false} />);
+    expect(screen.queryAllByTestId("gantt-entry")).toHaveLength(0);
+    const cluster = screen.getByTestId("gantt-cluster");
+    expect(cluster).toHaveAttribute("data-count", "20");
+  });
+});

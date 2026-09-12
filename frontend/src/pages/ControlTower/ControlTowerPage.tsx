@@ -26,7 +26,8 @@ import { SeverityBadge } from "@/components/RiskBadge";
 import { Section } from "@/components/Section";
 import { WhyDrawer } from "@/components/WhyDrawer";
 import { ALERT_SEVERITY_RANK, humanize } from "@/lib/constants";
-import { formatCurrency, formatHours, formatNumber, formatPct } from "@/lib/formatters";
+import { formatCurrency, formatNumber, formatPct } from "@/lib/formatters";
+import { formatWorkHours } from "@/lib/metricPairs";
 import { formatDateTime, formatRelative } from "@/lib/time";
 import { useLocalStorage } from "@/lib/useLocalStorage";
 
@@ -73,9 +74,9 @@ const lateAlertColumns = (now: Date): Column<Alert>[] => [
 
 const capacityGapColumns: Column<CapacityTotals>[] = [
   { key: "key", header: "Process / resource", cell: (r) => <span className="strong">{humanize(r.key)}</span>, sortValue: (r) => r.key },
-  { key: "req", header: "Required", numeric: true, cell: (r) => formatHours(r.required_hours, 0), sortValue: (r) => r.required_hours },
-  { key: "avail", header: "Available", numeric: true, cell: (r) => formatHours(r.available_hours, 0), sortValue: (r) => r.available_hours },
-  { key: "gap", header: "Gap", numeric: true, cell: (r) => <span className={r.gap_hours < 0 ? "tone-late strong" : "tone-ready"}>{r.gap_hours > 0 ? "+" : ""}{formatHours(r.gap_hours, 0)}</span>, sortValue: (r) => r.gap_hours },
+  { key: "req", header: "Required", numeric: true, cell: (r) => formatWorkHours(r.required_hours, 0), sortValue: (r) => r.required_hours },
+  { key: "avail", header: "Available", numeric: true, cell: (r) => formatWorkHours(r.available_hours, 0), sortValue: (r) => r.available_hours },
+  { key: "gap", header: "Gap", numeric: true, cell: (r) => <span className={r.gap_hours < 0 ? "tone-late strong" : "tone-ready"}>{r.gap_hours > 0 ? "+" : ""}{formatWorkHours(r.gap_hours, 0)}</span>, sortValue: (r) => r.gap_hours },
   { key: "load", header: "Load", numeric: true, cell: (r) => <span className={r.utilization_pct > 100 ? "tone-late" : r.utilization_pct >= 85 ? "tone-at-risk" : ""}>{formatPct(r.utilization_pct, 0)}</span>, sortValue: (r) => r.utilization_pct },
 ];
 

@@ -1,6 +1,7 @@
 import type { Bottleneck } from "@/api/types";
 import { humanize } from "@/lib/constants";
-import { formatCurrency, formatHours, formatNumber, formatPct } from "@/lib/formatters";
+import { formatCurrency, formatNumber, formatPct } from "@/lib/formatters";
+import { formatWorkHours } from "@/lib/metricPairs";
 
 import { RiskBadge } from "./RiskBadge";
 import "./BottleneckCard.css";
@@ -53,8 +54,8 @@ export function BottleneckCard({ bottleneck, title = "Current bottleneck", onOpe
           <dd className="num">{formatNumber(b.orders_waiting)}</dd>
         </div>
         <div>
-          <dt>Capacity shortfall</dt>
-          <dd className="num">{formatHours(b.capacity_shortfall_hours, 0)} <span className="text-faint">machine hours</span></dd>
+          <dt>Shortfall (machine hours)</dt>
+          <dd className="num">{formatWorkHours(b.capacity_shortfall_hours, 0)}</dd>
         </div>
         <div>
           <dt>Revenue at risk</dt>

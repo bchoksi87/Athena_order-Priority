@@ -13,9 +13,6 @@ import "./AppShell.css";
 
 const APP_ENV = (import.meta.env.VITE_APP_ENV ?? "dev").toUpperCase();
 
-/** Writeback mode is a backend deployment setting; until an endpoint exposes it the UI shows READ ONLY. */
-const WRITEBACK_MODE = "read_only";
-
 function useClock(intervalMs = 30_000): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -61,6 +58,23 @@ function AlertCounter() {
       <span>Alerts</span>
       <span className={`topbar-alerts-count${count === 0 ? " zero" : ""}`}>{count > 99 ? "99+" : count}</span>
     </NavLink>
+  );
+}
+
+/** ERP writeback mode as reported by GET /health (a backend deployment setting, PPSE_WRITEBACK_MODE). */
+function WritebackBadge() {
+  const { data } = useHealth();
+  const mode = data?.writeback_mode ?? "read_only";
+  const label = WRITEBACK_LABELS[mode] ?? mode.toUpperCase();
+  const title = data
+    ? mode === "read_only"
+      ? "ERP writeback mode: read only — the ERP is never written"
+      : `ERP writeback mode: ${mode} — publishing a schedule goes through the writeback gateway`
+    : "ERP writeback mode (waiting for GET /health)";
+  return (
+    <span className={`badge badge-writeback badge-writeback-${mode}`} title={title} data-testid="writeback-badge">
+      {label}
+    </span>
   );
 }
 
@@ -116,9 +130,7 @@ export function AppShell() {
         <span className="topbar-clock">{formatDateTime(now, "EEE dd MMM HH:mm")}</span>
         <div className="topbar-badges">
           <span className="badge badge-env">{APP_ENV}</span>
-          <span className="badge badge-writeback" title="ERP writeback mode">
-            {WRITEBACK_LABELS[WRITEBACK_MODE]}
-          </span>
+          <WritebackBadge />
           <HealthBadge />
         </div>
         <AlertCounter />

@@ -1,7 +1,7 @@
 import { useScheduleVersions } from "@/api/schedule";
 import type { ScheduleVersionResponse } from "@/api/types";
 import { humanize } from "@/lib/constants";
-import { formatDateTime } from "@/lib/time";
+import { describeVersion } from "@/lib/scheduleVersions";
 
 export interface VersionSelectProps {
   /** Selected version number; null = the active plan. */
@@ -16,13 +16,6 @@ export interface VersionSelectProps {
   exclude?: number[];
   ariaLabel?: string;
   disabled?: boolean;
-}
-
-export function describeVersion(v: ScheduleVersionResponse): string {
-  const parts = [`v${v.version_number}`, humanize(v.status), formatDateTime(v.generated_at, "dd MMM HH:mm")];
-  if (v.label) parts.push(v.label);
-  else if (v.trigger && v.trigger !== "manual") parts.push(v.trigger);
-  return parts.join(" · ");
 }
 
 /** Schedule version picker backed by GET /schedule/versions (spec Phase 37): active plan vs a draft. */

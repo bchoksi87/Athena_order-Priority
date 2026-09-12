@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
 import type { ScheduleQuality, ScheduleVersionResponse } from "@/api/types";
-import { formatHours, formatNumber, formatPct, formatScore } from "@/lib/formatters";
+import { formatNumber, formatPct, formatScore } from "@/lib/formatters";
+import { formatWorkHours } from "@/lib/metricPairs";
 import { formatDateTime } from "@/lib/time";
 
 import { ScheduleStatusPill } from "./StatusPill";
@@ -101,7 +102,7 @@ export function PlanVersionCard({ version, quality, title = "Active plan", actio
             <div>
               <dt>Outcome</dt>
               <dd className="num">
-                On-time {formatPct(m.on_time_pct, 0)} · late {formatNumber(m.late_orders)} · avg lateness {formatHours(m.avg_lateness_hours)} · util {formatPct(m.overall_utilization_pct, 0)}
+                On-time {formatPct(m.on_time_pct, 0)} · late {formatNumber(m.late_orders)} · avg lateness {formatWorkHours(m.avg_lateness_hours)} · util {formatPct(m.overall_utilization_pct, 0)}
               </dd>
             </div>
           ) : null}

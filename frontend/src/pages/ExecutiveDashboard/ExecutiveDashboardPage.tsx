@@ -155,7 +155,7 @@ export default function ExecutiveDashboardPage() {
           <KpiCard label="Orders due this week" value={formatNumber(k?.orders_due_this_week)} tone="neutral" loading={kpis.isPending} />
           <KpiCard label="Overdue orders" value={formatNumber(k?.overdue_orders)} tone={(k?.overdue_orders ?? 0) > 0 ? "late" : "ready"} loading={kpis.isPending} onClick={() => navigate(`${routes.priorityQueue}?due_to=${formatDateTime(now, "yyyy-MM-dd")}`)} hint="due date in the past" />
           <KpiCard label="At-risk orders" value={formatNumber(k?.at_risk_orders)} tone={(k?.at_risk_orders ?? 0) > 0 ? "blocked" : "ready"} loading={kpis.isPending} onClick={() => navigate(`${routes.priorityQueue}?risk=high`)} hint="risk high or critical" />
-          <KpiCard label="On-time delivery %" value={formatPct(k?.on_time_delivery_pct, 0)} tone={pctTone(k?.on_time_delivery_pct)} loading={kpis.isPending} hint={otd.data ? `delivered in the last ${otd.data.window_days} days` : "historical"} sparkline={trend.map((t) => t.historical).filter((v): v is number => v !== null)} />
+          <KpiCard label="On-time delivery %" value={formatPct(k?.on_time_delivery_pct, 0)} tone={pctTone(k?.on_time_delivery_pct)} loading={kpis.isPending} hint={otd.data ? `delivered in the last ${otd.data.window_days} days` : "historical"} />
           <KpiCard label="Expected on-time %" value={formatPct(k?.expected_on_time_delivery_pct, 0)} tone={pctTone(k?.expected_on_time_delivery_pct)} loading={kpis.isPending} hint="scheduled open orders in the plan" />
         </div>
       </Section>

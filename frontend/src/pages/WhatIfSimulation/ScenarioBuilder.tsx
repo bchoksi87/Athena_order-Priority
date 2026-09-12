@@ -1,135 +1,190 @@
-/** Builds the list of Scenario objects sent to POST /schedule/simulate. */
-import { useState } from "react";
+/**
+ * Scenario builder: one form per scenario kind (every kind of GET /simulation/scenario-types),
+ * with machine / customer / order / material pickers backed by the list endpoints, and the
+ * scenario list that is sent as one what-if run.
+ */
+import { useMemo, useState } from "react";
 
-import type { Scenario, ScenarioKind } from "@/api/types";
-import { toUtcIso } from "@/lib/time";
+import type { SimulationScenario, SimulationScenarioKind } from "@/api/types";
+import { FACTOR_KEYS, FACTOR_NAMES, PROCESS_TYPES, humanize } from "@/lib/constants";
 
-const KIND_LABELS: Record<ScenarioKind, string> = {
-  machine_down: "Machine down",
-  urgent_orders: "Urgent orders",
-  add_machine: "Add machine",
-  extra_shift: "Extra shift",
-  working_day: "Extra working day",
-  outsource: "Outsource orders",
-  material_delay: "Material delay",
-  prioritize_customer: "Prioritise customer",
-  weight_change: "Change factor weights",
-  due_date_change: "Change due date",
-};
+import { SCENARIO_SPECS, SCENARIO_SPEC_BY_KIND, buildScenario, describeScenario, parseWeights, validateForm, visibleFields, type FieldSpec, type FormValues } from "./scenarioSpecs";
+
+export interface PickerData {
+  machines: Array<{ id: string; label: string }>;
+  customers: Array<{ id: string; label: string }>;
+  groups: string[];
+  orderIds: string[];
+  materialIds: string[];
+  /** Active profile weights (points) shown as placeholders for the weight editor. */
+  profileWeights: Record<string, number>;
+  /** Called with the text typed into an order picker so the page can search the server. */
+  onOrderQuery?: (text: string) => void;
+}
 
 export interface ScenarioBuilderProps {
-  scenarios: Scenario[];
-  onChange: (next: Scenario[]) => void;
-  machineIds: string[];
+  scenarios: SimulationScenario[];
+  onChange: (next: SimulationScenario[]) => void;
+  pickers: PickerData;
+  /** Scenario kinds the backend advertises (GET /simulation/scenario-types); others are hidden. */
+  availableKinds?: string[];
+  disabled?: boolean;
 }
 
-function splitIds(text: string): string[] {
-  return text
-    .split(/[\s,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+function serializeWeights(map: Record<string, string>): string {
+  return Object.entries(map)
+    .filter(([, v]) => v.trim() !== "")
+    .map(([k, v]) => `${k}=${v.trim()}`)
+    .join(", ");
 }
 
-function localToIso(value: string): string {
-  return value ? toUtcIso(new Date(value)) : "";
+function WeightsEditor({ value, onChange, profileWeights }: { value: string; onChange: (v: string) => void; profileWeights: Record<string, number> }) {
+  const current = parseWeights(value);
+  const set = (key: string, v: string) => {
+    const map: Record<string, string> = Object.fromEntries(Object.entries(current).map(([k, n]) => [k, String(n)]));
+    map[key] = v;
+    onChange(serializeWeights(map));
+  };
+  return (
+    <div className="grid grid-2" style={{ gridColumn: "1 / -1" }}>
+      {FACTOR_KEYS.map((key) => (
+        <label key={key} className="field">
+          <span className="label">{FACTOR_NAMES[key] ?? humanize(key)}</span>
+          <span className="row gap-1">
+            <input className="input num" type="number" min={0} step="any" value={current[key] !== undefined ? String(current[key]) : ""} placeholder={profileWeights[key] !== undefined ? `${profileWeights[key]} (active)` : "unchanged"} onChange={(e) => set(key, e.target.value)} aria-label={`Weight ${key}`} />
+            <span className="text-faint text-xs">pts</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
 }
 
-function describeScenario(s: Scenario): string {
-  switch (s.kind) {
-    case "machine_down":
-      return `${s.machine_id} down ${s.start.slice(0, 16)} → ${s.end.slice(0, 16)}`;
-    case "urgent_orders":
-      return `Urgent: ${s.order_ids.join(", ")}${s.boost_points ? ` (+${s.boost_points})` : ""}`;
-    case "add_machine":
-      return `Add machine like ${s.template_machine_id}${s.machine_id ? ` as ${s.machine_id}` : ""}`;
-    case "extra_shift":
-      return `Extra shift ${s.start.slice(0, 16)} → ${s.end.slice(0, 16)}${s.machine_ids?.length ? ` on ${s.machine_ids.join(", ")}` : ""}`;
-    case "working_day":
-      return `Work on ${s.date}${s.machine_ids?.length ? ` (${s.machine_ids.join(", ")})` : ""}`;
-    case "outsource":
-      return `Outsource ${s.order_ids.join(", ")}`;
-    case "material_delay":
-      return `Material ${s.material_id} delayed ${s.delay_hours}h`;
-    case "prioritize_customer":
-      return `Prioritise customer ${s.customer_id}${s.boost_points ? ` (+${s.boost_points})` : ""}`;
-    case "weight_change":
-      return `Weights: ${Object.entries(s.weights)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ")}`;
-    case "due_date_change":
-      return `${s.order_id} due ${s.new_due_date.slice(0, 16)}`;
-  }
-}
+export function ScenarioBuilder({ scenarios, onChange, pickers, availableKinds, disabled = false }: ScenarioBuilderProps) {
+  const specs = useMemo(() => SCENARIO_SPECS.filter((s) => !availableKinds || availableKinds.includes(s.kind)), [availableKinds]);
+  const [kind, setKind] = useState<SimulationScenarioKind>(specs[0]?.kind ?? "machine_down");
+  const [values, setValues] = useState<FormValues>({});
+  const [touched, setTouched] = useState(false);
+  const spec = SCENARIO_SPEC_BY_KIND[kind];
+  const fields = visibleFields(spec, values);
+  const error = validateForm(kind, values);
 
-export function ScenarioBuilder({ scenarios, onChange, machineIds }: ScenarioBuilderProps) {
-  const [kind, setKind] = useState<ScenarioKind>("machine_down");
-  const [f, setF] = useState<Record<string, string>>({});
-  const field = (k: string) => f[k] ?? "";
-  const setField = (k: string, v: string) => setF((prev) => ({ ...prev, [k]: v }));
+  const setField = (key: string, v: string) => setValues((prev) => ({ ...prev, [key]: v }));
 
-  const build = (): Scenario | null => {
-    switch (kind) {
-      case "machine_down":
-        return field("machine_id") && field("start") && field("end")
-          ? { kind, machine_id: field("machine_id"), start: localToIso(field("start")), end: localToIso(field("end")), reason: field("reason") || undefined }
-          : null;
-      case "urgent_orders":
-        return splitIds(field("order_ids")).length ? { kind, order_ids: splitIds(field("order_ids")), boost_points: field("points") ? Number(field("points")) : undefined } : null;
-      case "add_machine":
-        return field("template") ? { kind, template_machine_id: field("template"), machine_id: field("machine_id") || undefined } : null;
-      case "extra_shift":
-        return field("start") && field("end") ? { kind, start: localToIso(field("start")), end: localToIso(field("end")), machine_ids: splitIds(field("machine_ids")) } : null;
-      case "working_day":
-        return field("date") ? { kind, date: field("date"), machine_ids: splitIds(field("machine_ids")) } : null;
-      case "outsource":
-        return splitIds(field("order_ids")).length ? { kind, order_ids: splitIds(field("order_ids")) } : null;
-      case "material_delay":
-        return field("material_id") && field("hours") ? { kind, material_id: field("material_id"), delay_hours: Number(field("hours")) } : null;
-      case "prioritize_customer":
-        return field("customer_id") ? { kind, customer_id: field("customer_id"), boost_points: field("points") ? Number(field("points")) : undefined } : null;
-      case "weight_change": {
-        const weights: Record<string, number> = {};
-        for (const part of splitIds(field("weights"))) {
-          const [k, v] = part.split("=");
-          if (k && v && !Number.isNaN(Number(v))) weights[k] = Number(v);
-        }
-        return Object.keys(weights).length ? { kind, weights } : null;
-      }
-      case "due_date_change":
-        return field("order_id") && field("due") ? { kind, order_id: field("order_id"), new_due_date: localToIso(field("due")) } : null;
+  const add = () => {
+    setTouched(true);
+    const s = buildScenario(kind, values);
+    if (!s) return;
+    onChange([...scenarios, s]);
+    setValues({});
+    setTouched(false);
+  };
+
+  const control = (f: FieldSpec) => {
+    const v = values[f.key] ?? "";
+    switch (f.kind) {
+      case "machine":
+        return (
+          <select className="select" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label}>
+            <option value="">{pickers.machines.length ? "Choose machine…" : "No machines loaded"}</option>
+            {pickers.machines.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        );
+      case "customer":
+        return (
+          <select className="select" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label}>
+            <option value="">{pickers.customers.length ? "Choose customer…" : "No customers loaded"}</option>
+            {pickers.customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        );
+      case "group":
+        return (
+          <select className="select" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label}>
+            <option value="">any group</option>
+            {pickers.groups.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        );
+      case "process":
+        return (
+          <select className="select" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label}>
+            <option value="">Choose process…</option>
+            {PROCESS_TYPES.map((p) => (
+              <option key={p} value={p}>
+                {humanize(p)}
+              </option>
+            ))}
+          </select>
+        );
+      case "select":
+        return (
+          <select className="select" value={v || f.options?.[0]?.value || ""} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label}>
+            {f.key === "tier_override" ? <option value="">unchanged</option> : null}
+            {(f.options ?? []).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        );
+      case "checkbox":
+        return (
+          <label className="row gap-1 text-sm" style={{ minHeight: 28 }}>
+            <input type="checkbox" checked={v === "true"} onChange={(e) => setField(f.key, e.target.checked ? "true" : "")} aria-label={f.label} /> yes
+          </label>
+        );
+      case "order":
+      case "orders":
+        return (
+          <input
+            className="input mono"
+            list="whatif-orders"
+            value={v}
+            placeholder={f.kind === "orders" ? "SO-1045, SO-1052" : "SO-1045"}
+            onChange={(e) => {
+              setField(f.key, e.target.value);
+              pickers.onOrderQuery?.(e.target.value.split(/[\s,;]+/).pop() ?? "");
+            }}
+            aria-label={f.label}
+          />
+        );
+      case "material":
+        return <input className="input mono" list="whatif-materials" value={v} placeholder="MAT-AL6061" onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
+      case "weights":
+        return <WeightsEditor value={v} onChange={(x) => setField(f.key, x)} profileWeights={pickers.profileWeights} />;
+      case "number":
+        return <input className="input num" type="number" min={f.min} step={f.step ?? "any"} value={v} placeholder={f.placeholder} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
+      case "datetime":
+        return <input className="input" type="datetime-local" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
+      case "date":
+        return <input className="input" type="date" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
+      case "time":
+        return <input className="input" type="time" value={v} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
+      default:
+        return <input className="input" value={v} placeholder={f.placeholder} onChange={(e) => setField(f.key, e.target.value)} aria-label={f.label} />;
     }
   };
 
-  const add = () => {
-    const s = build();
-    if (!s) return;
-    onChange([...scenarios, s]);
-    setF({});
-  };
-
-  const machineSelect = (key: string, label: string) => (
-    <label className="field">
-      <span className="label">{label}</span>
-      <input className="input" list="sim-machines" value={field(key)} onChange={(e) => setField(key, e.target.value)} placeholder="CNC-01" />
-    </label>
-  );
-  const text = (key: string, label: string, placeholder = "") => (
-    <label className="field">
-      <span className="label">{label}</span>
-      <input className="input" value={field(key)} onChange={(e) => setField(key, e.target.value)} placeholder={placeholder} />
-    </label>
-  );
-  const dateTime = (key: string, label: string) => (
-    <label className="field">
-      <span className="label">{label}</span>
-      <input className="input" type="datetime-local" value={field(key)} onChange={(e) => setField(key, e.target.value)} />
-    </label>
-  );
-
   return (
-    <div className="col gap-3">
-      <datalist id="sim-machines">
-        {machineIds.map((id) => (
+    <div className="col gap-3" data-testid="scenario-builder">
+      <datalist id="whatif-orders">
+        {pickers.orderIds.map((id) => (
+          <option key={id} value={id} />
+        ))}
+      </datalist>
+      <datalist id="whatif-materials">
+        {pickers.materialIds.map((id) => (
           <option key={id} value={id} />
         ))}
       </datalist>
@@ -138,96 +193,70 @@ export function ScenarioBuilder({ scenarios, onChange, machineIds }: ScenarioBui
         <select
           className="select"
           value={kind}
+          aria-label="Scenario type"
+          disabled={disabled}
           onChange={(e) => {
-            setKind(e.target.value as ScenarioKind);
-            setF({});
+            setKind(e.target.value as SimulationScenarioKind);
+            setValues({});
+            setTouched(false);
           }}
         >
-          {(Object.keys(KIND_LABELS) as ScenarioKind[]).map((k) => (
-            <option key={k} value={k}>
-              {KIND_LABELS[k]}
+          {specs.map((s) => (
+            <option key={s.kind} value={s.kind}>
+              {s.label}
             </option>
           ))}
         </select>
+        <span className="fld-msg text-faint">{spec.question}</span>
       </label>
       <div className="grid grid-2">
-        {kind === "machine_down" ? (
-          <>
-            {machineSelect("machine_id", "Machine")}
-            {text("reason", "Reason", "breakdown")}
-            {dateTime("start", "From")}
-            {dateTime("end", "To")}
-          </>
-        ) : null}
-        {kind === "urgent_orders" ? (
-          <>
-            {text("order_ids", "Order ids (comma separated)", "R3D-10482, R3D-10490")}
-            {text("points", "Boost points", "30")}
-          </>
-        ) : null}
-        {kind === "add_machine" ? (
-          <>
-            {machineSelect("template", "Clone capabilities of")}
-            {text("machine_id", "New machine id", "CNC-NEW")}
-          </>
-        ) : null}
-        {kind === "extra_shift" ? (
-          <>
-            {dateTime("start", "From")}
-            {dateTime("end", "To")}
-            {text("machine_ids", "Machines (blank = all)", "CNC-01, CNC-02")}
-          </>
-        ) : null}
-        {kind === "working_day" ? (
-          <>
-            <label className="field">
-              <span className="label">Date</span>
-              <input className="input" type="date" value={field("date")} onChange={(e) => setField("date", e.target.value)} />
+        {fields.map((f) =>
+          f.kind === "weights" ? (
+            <div key={f.key} className="col gap-1" style={{ gridColumn: "1 / -1" }}>
+              <span className="label">{f.label}</span>
+              {control(f)}
+              {f.help ? <span className="fld-msg text-faint">{f.help}</span> : null}
+            </div>
+          ) : (
+            <label key={f.key} className="field">
+              <span className="label">
+                {f.label}
+                {f.required ? <span className="tone-late"> *</span> : null}
+              </span>
+              {control(f)}
+              {f.help ? <span className="fld-msg text-faint">{f.help}</span> : null}
             </label>
-            {text("machine_ids", "Machines (blank = all)")}
-          </>
-        ) : null}
-        {kind === "outsource" ? text("order_ids", "Order ids", "R3D-10482") : null}
-        {kind === "material_delay" ? (
-          <>
-            {text("material_id", "Material id", "AL-6061")}
-            {text("hours", "Delay (hours)", "48")}
-          </>
-        ) : null}
-        {kind === "prioritize_customer" ? (
-          <>
-            {text("customer_id", "Customer id", "C-1")}
-            {text("points", "Boost points", "20")}
-          </>
-        ) : null}
-        {kind === "weight_change" ? text("weights", "Weights key=value", "due_date_urgency=35, order_value=5") : null}
-        {kind === "due_date_change" ? (
-          <>
-            {text("order_id", "Order id")}
-            {dateTime("due", "New due date")}
-          </>
-        ) : null}
+          ),
+        )}
+        <label className="field">
+          <span className="label">Label (optional)</span>
+          <input className="input" value={values.label ?? ""} placeholder="CNC-07 spindle failure" onChange={(e) => setField("label", e.target.value)} aria-label="Label" />
+        </label>
       </div>
+      {touched && error ? <div className="fld-msg fld-msg-error">{error}</div> : null}
       <div className="row">
-        <button type="button" className="btn" onClick={add} disabled={!build()}>
+        <button type="button" className="btn" onClick={add} disabled={disabled || Boolean(error)} data-testid="add-scenario">
           Add scenario
         </button>
-        <span className="text-faint text-xs">Scenarios are combined into one what-if run.</span>
+        <span className="text-faint text-xs">Scenarios are applied in order on one cloned snapshot and combined into one what-if run.</span>
       </div>
       {scenarios.length > 0 ? (
-        <ul className="col gap-1 text-sm" style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        <ol className="col gap-1 text-sm" style={{ margin: 0, paddingLeft: 0, listStyle: "none" }} data-testid="scenario-list">
           {scenarios.map((s, i) => (
             <li key={i} className="row" style={{ justifyContent: "space-between", padding: "4px 8px", background: "var(--bg-panel-raised)", borderRadius: 3 }}>
-              <span>
-                <span className="mono text-muted">{KIND_LABELS[s.kind]}</span> · {describeScenario(s)}
+              <span className="truncate" title={describeScenario(s)}>
+                <span className="mono text-muted">{i + 1}. {SCENARIO_SPEC_BY_KIND[s.kind].label}</span> · {s.label ? <strong>{s.label} · </strong> : null}
+                {describeScenario(s)}
               </span>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange(scenarios.filter((_, j) => j !== i))} aria-label="Remove scenario">
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange(scenarios.filter((_, j) => j !== i))} aria-label={`Remove scenario ${i + 1}`} disabled={disabled}>
                 ×
               </button>
             </li>
           ))}
-        </ul>
-      ) : null}
+        </ol>
+      ) : (
+        <div className="text-faint text-sm">No scenarios yet — fill the form and add one or more.</div>
+      )}
     </div>
   );
 }

@@ -64,7 +64,8 @@
 .bneck-facts dt {
   font-size: var(--fs-xs);
   color: var(--fg-muted);
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.3;
 }
 .bneck-facts dd {
   margin: 0;

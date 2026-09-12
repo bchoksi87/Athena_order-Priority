@@ -39,12 +39,12 @@ export function higherIsBetter(key: string): boolean {
   return !LOWER_IS_BETTER.has(key);
 }
 
-/** Hours stay hours ("126h", never "5.3d") so setup / lateness totals read like the spec. */
-function formatPlainHours(value: number | null | undefined): string {
+/** Hours stay hours ("126h", never "5.3d") so capacity / setup / lateness totals read like the spec. */
+export function formatWorkHours(value: number | null | undefined, digits?: number): string {
   if (value === null || value === undefined || Number.isNaN(value)) return DASH;
   const abs = Math.abs(value);
-  const text = abs >= 100 ? abs.toFixed(0) : abs.toFixed(1);
-  return `${value < 0 ? "-" : ""}${text}h`;
+  const d = digits ?? (abs >= 100 ? 0 : 1);
+  return `${value < 0 ? "-" : ""}${abs.toFixed(d)}h`;
 }
 
 export function formatMetricValue(key: string, value: number | null | undefined): string {
@@ -52,7 +52,7 @@ export function formatMetricValue(key: string, value: number | null | undefined)
     case "pct":
       return formatPct(value, 0);
     case "hours":
-      return formatPlainHours(value);
+      return formatWorkHours(value);
     case "currency":
       return formatCurrency(value);
     case "score":

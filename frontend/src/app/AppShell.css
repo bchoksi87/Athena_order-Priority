@@ -169,6 +169,17 @@
   border-color: var(--status-at-risk);
   background: var(--status-at-risk-soft);
 }
+.badge-writeback-writeback,
+.badge-writeback-controlled_auto {
+  color: var(--status-late);
+  border-color: var(--status-late);
+  background: var(--status-late-soft);
+}
+.badge-writeback-approval {
+  color: var(--status-hold);
+  border-color: var(--status-hold);
+  background: var(--status-hold-soft);
+}
 .badge-health-ok {
   color: var(--status-ready);
   border-color: var(--status-ready);
