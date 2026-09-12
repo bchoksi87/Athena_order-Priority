@@ -22,7 +22,7 @@ tables a backup must cover. Spec sections: DEPLOYMENT, OBSERVABILITY, Phase 26, 
 | `migrate` (job) | backend image, `python -m app.cli migrate` | Alembic `upgrade head` | implemented |
 | `seed` (job) | backend image, `python -m app.cli seed && python -m app.cli sync --mode full` | Dev users + default config; synthetic ERP load through the mock connector | implemented (see §6.5 caveat on users) |
 | `backend` (API) | backend image, `uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --proxy-headers` | FastAPI on `/api/v1` | implemented: `/health`, `/metrics`, `/auth/*`, `/orders` (queue, detail, explanation, machine options, expedite/hold/release/override-priority/force-next/move/lock-machine, overrides and expedites), `/machines` (list, detail, schedule), `/schedule/lock`, `/schedule/unlock`, `/schedule/locks`, `/priority/configuration` (+ versions, activate, preview), `/scheduling/configuration` (+ versions, activate), `/customers` (+ rules), `/alerts` (+ summary, acknowledge), `/audit`, `/data-quality` (+ issues, run), `/users`, backed by `app/services/*`. **Missing** from contract §9: `/schedule/generate`, `/schedule/simulate`, `/schedule/approve`, `/schedule/publish`, `/schedule/versions`, `/analytics/*`, `/sync/*` — nothing yet runs `app/engines/pipeline.py::PlanningPipeline` to produce a schedule version |
-| `worker` | backend image, `python -m app.cli worker` | Background sync / replanning / alert evaluation (APScheduler) | **stub**: `python -m app.cli worker` prints "background worker not yet implemented" and exits with code 2, and `app/workers` is empty, so the compose `worker` service exits immediately and, with `restart: unless-stopped`, restarts in a loop. Scale it to zero (`docker compose up --scale worker=0`) until the worker exists. |
+| `worker` | backend image, `python -m app.cli worker` | Background sync / replanning / alert evaluation (APScheduler 3 `BackgroundScheduler`; intervals from `PPSE_SYNC_INTERVAL_MINUTES`, `PPSE_REPLAN_INTERVAL_MINUTES`, alerts every 5 min; `max_instances=1`, coalescing, graceful SIGTERM shutdown). Run one job and exit with `--once sync|replan|alerts` (used for smoke tests and cron-style deployments). |
 | `frontend` | nginx 1.27 serving the Vite build; proxies `/api/` to `BACKEND_URL` | React control tower | implemented (pages exist; they depend on backend endpoints that are not there yet) |
 
 The backend image is a single artefact; API and worker are the same image with different
@@ -67,7 +67,7 @@ CLI reference (`python -m app.cli --help`; global options `--database-url`, `--l
 | `sync` | `--mode full|incremental`, `--connector`, `--scale small|medium|large`, `--seed`, `--dq-defect-ratio`, `--prune`, `--retry-attempts` | `SyncService.run(mode)` with the selected connector (`PPSE_ERP_CONNECTOR`, default `mock`) |
 | `snapshot-stats` | `--as-of`, `--include-closed` | Builds the `PlanningSnapshot` from the database and prints its summary |
 | `create-user` | `--username`, `--password`, `--role`, `--display-name`, `--email` | Creates a local account |
-| `worker` | — | Placeholder: writes "background worker not yet implemented" to stderr and exits 2 |
+| `worker` | `--once sync|replan|alerts` | Runs the APScheduler loop (blocking) or a single job; exit 1 when the job fails |
 
 ### 2.2 Frontend
 
@@ -128,7 +128,7 @@ db (postgres:16-alpine, healthcheck pg_isready, volume ppse-pgdata, port ${POSTG
      ├─ seed     (depends_on migrate: completed_successfully)  seed && sync --mode full
      ├─ backend  (depends_on migrate: completed_successfully)  uvicorn …, port ${BACKEND_PORT}:8000,
      │            healthcheck GET /api/v1/health, PPSE_BACKGROUND_JOBS_ENABLED=false
-     ├─ worker   (depends_on migrate: completed_successfully)  python -m app.cli worker   ← not implemented
+     ├─ worker   (depends_on migrate: completed_successfully)  python -m app.cli worker   (PPSE_BACKGROUND_JOBS_ENABLED=true)
      └─ frontend (depends_on backend: service_healthy)   nginx, port ${FRONTEND_PORT}:80, BACKEND_URL=http://backend:8000
 ```
 
@@ -378,16 +378,14 @@ audit log; stepping *down* the ladder is always allowed immediately.
 
 ## 12. Not implemented yet (summary)
 
-* The background worker: `python -m app.cli worker` is a stub and `app/workers` is empty
-  (sync/replan/alert jobs; the `PPSE_BACKGROUND_JOBS_ENABLED`, `PPSE_SYNC_INTERVAL_MINUTES`,
-  `PPSE_REPLAN_INTERVAL_MINUTES` settings are unused).
-* Schedule generation, simulation, approval and publishing as HTTP operations (`/schedule/generate`,
-  `/schedule/simulate`, `/schedule/approve`, `/schedule/publish`, `/schedule/versions`), the
-  `/analytics/*` and `/sync/*` routers, and a service that runs `PlanningPipeline` and persists
-  `optimization_runs` / `schedule_versions` / `priority_results`; therefore no HTTP endpoint yet
-  exposes `sync_runs` or `optimization_runs` for monitoring (configuration versions are exposed
-  under `/priority/configuration/versions` and `/scheduling/configuration/versions`).
-* Writeback gateways other than read-only.
-* Prometheus-format metrics; connector/job status in `/health`.
-* Backup scripts and a `README.md` at the repository root (referenced by
-  `docs/DESIGN_CONTRACT.md` §12).
+* Writeback gateways other than read-only: `APPROVAL`, `WRITEBACK` and `CONTROLLED_AUTO` route
+  through `MockWritebackGateway` until a real ERP gateway exists (`docs/ERP_INTEGRATION.md` §7).
+  Never enable them against a production ERP before the validation gates described there.
+* `/metrics` is JSON (request counters, engine counters); a Prometheus exposition format is not
+  provided yet — scrape the JSON or add an exporter.
+* `POST /sync/run` executes synchronously in the API process (≈25 s for the medium synthetic
+  plant); large real-ERP loads should be triggered through the worker instead.
+* Backup scripts are described in §7 but not shipped; wire `pg_dump` into your platform's job
+  scheduler.
+* The order list endpoint pages in Python after loading the open book (≈2 s for 4,000 open lines);
+  SQL-level paging is the planned optimisation for the "large" plant size.

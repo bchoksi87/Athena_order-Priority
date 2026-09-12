@@ -82,7 +82,7 @@ Backend virtualenv lives at `backend/.venv` (git-ignored). Run everything from `
 │   │   │   └── v1/               # one router module per resource
 │   │   └── workers/              # background jobs (sync, replan, alerts)
 │   ├── synthetic/                # synthetic data generator (deterministic, seeded)
-│   └── tests/{unit,integration,simulation}/
+│   └── tests/{unit,engines,integration,api,simulation}/
 └── frontend/                     # Vite + React + TS (see §11)
 ```
 
