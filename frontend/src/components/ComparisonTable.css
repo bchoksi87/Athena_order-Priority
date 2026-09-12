@@ -1,0 +1,49 @@
+.cmp {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.cmp th,
+.cmp td {
+  padding: 5px var(--sp-2);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+}
+.cmp-dense th,
+.cmp-dense td {
+  padding: 3px var(--sp-2);
+  font-size: var(--fs-xs);
+}
+.cmp th {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+.cmp td.num,
+.cmp th.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.cmp-arrow {
+  width: 20px;
+  text-align: center;
+  color: var(--fg-faint);
+}
+.cmp-better .cmp-after,
+.cmp-better .cmp-delta {
+  color: var(--status-ready);
+}
+.cmp-worse .cmp-after,
+.cmp-worse .cmp-delta {
+  color: var(--status-late);
+}
+.cmp-same .cmp-delta {
+  color: var(--fg-faint);
+}
+.cmp tbody tr:last-child td {
+  border-bottom: none;
+}

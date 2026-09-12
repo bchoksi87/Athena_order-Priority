@@ -4,7 +4,7 @@
  */
 import type { MetricPair } from "@/api/types";
 
-import { formatCurrency, formatHours, formatNumber, formatPct, formatScore, formatSigned } from "./formatters";
+import { DASH, formatCurrency, formatNumber, formatPct, formatScore, formatSigned } from "./formatters";
 
 export type MetricUnit = "pct" | "hours" | "currency" | "count" | "score";
 
@@ -39,12 +39,20 @@ export function higherIsBetter(key: string): boolean {
   return !LOWER_IS_BETTER.has(key);
 }
 
+/** Hours stay hours ("126h", never "5.3d") so setup / lateness totals read like the spec. */
+function formatPlainHours(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return DASH;
+  const abs = Math.abs(value);
+  const text = abs >= 100 ? abs.toFixed(0) : abs.toFixed(1);
+  return `${value < 0 ? "-" : ""}${text}h`;
+}
+
 export function formatMetricValue(key: string, value: number | null | undefined): string {
   switch (metricUnit(key)) {
     case "pct":
       return formatPct(value, 0);
     case "hours":
-      return formatHours(value, 1);
+      return formatPlainHours(value);
     case "currency":
       return formatCurrency(value);
     case "score":

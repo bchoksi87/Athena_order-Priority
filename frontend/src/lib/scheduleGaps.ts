@@ -4,7 +4,7 @@
  * see in the plan itself (spec Phase 8 MACHINE VIEW "12:00 — Break").
  */
 import type { GanttBlock, ScheduleEntry, TimeWindow } from "@/api/types";
-import { parseUtc } from "./time";
+import { formatDateTime, parseUtc } from "./time";
 
 export interface IdleGap {
   start: Date;
@@ -75,4 +75,9 @@ export function machineLines(blocks: GanttBlock[], downtime: TimeWindow[], minId
     lines.push({ kind: "idle", at: g.start, end: g.end, label: `Break / idle — ${Math.round(g.minutes)} min`, entry: null, block: null, reason: null });
   }
   return lines.sort((a, b) => a.at.getTime() - b.at.getTime() || (a.kind === "setup" ? -1 : 1));
+}
+
+/** The spec's list line: "08:00 — Setup — Job 1045". */
+export function formatMachineLine(line: MachineLine): string {
+  return `${formatDateTime(line.at, "HH:mm")} — ${line.label}`;
 }

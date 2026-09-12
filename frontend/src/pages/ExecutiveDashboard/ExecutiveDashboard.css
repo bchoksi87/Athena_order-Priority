@@ -1,0 +1,70 @@
+.exec-otd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.exec-otd-table th,
+.exec-otd-table td {
+  padding: 4px var(--sp-2);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.exec-otd-table th {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  text-align: left;
+  font-weight: 600;
+}
+.exec-otd-table td.num,
+.exec-otd-table th.num {
+  text-align: right;
+}
+.exec-otd-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.exec-otd-bar {
+  display: inline-block;
+  width: 64px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--status-neutral-soft);
+  vertical-align: middle;
+  margin-right: 6px;
+  overflow: hidden;
+}
+.exec-otd-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+.exec-sev {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+.exec-sev-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-top-width: 3px;
+  background: var(--bg-panel-raised);
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.exec-sev-tile:hover {
+  background: var(--bg-hover);
+}
+.exec-sev-tile .num {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.1;
+}
+.exec-sev-tile .label {
+  margin: 0;
+}

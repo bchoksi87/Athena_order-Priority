@@ -15,6 +15,8 @@ export interface TimelineProps {
   day: Date;
   now?: Date;
   downtime?: TimeWindow[];
+  /** Idle / non-working windows drawn as a flat shade behind the bars. */
+  nonWorking?: TimeWindow[];
   onEntryClick?: (entry: ScheduleEntry) => void;
   selectedEntryId?: string | null;
   height?: number;
@@ -32,6 +34,7 @@ export function Timeline({
   day,
   now = new Date(),
   downtime = [],
+  nonWorking = [],
   onEntryClick,
   selectedEntryId = null,
   height = 72,
@@ -96,6 +99,19 @@ export function Timeline({
                 ))
             : null}
         </g>
+        {nonWorking.flatMap((w, i) => {
+          const a = parseUtc(w.start);
+          const b = parseUtc(w.end);
+          if (!a || !b) return [];
+          const span = clampSpan(scale, a, b);
+          return span
+            ? [
+                <rect key={`nw-${i}`} className="timeline-nonworking" x={span.x} y={AXIS} width={span.width} height={height - AXIS}>
+                  <title>{w.reason || "Non-working"}</title>
+                </rect>,
+              ]
+            : [];
+        })}
         {downtime.flatMap((w, i) => {
           const a = parseUtc(w.start);
           const b = parseUtc(w.end);
@@ -129,6 +145,11 @@ export function Timeline({
                       {entry.order_id} · {formatMinutes(entry.run_minutes)} · {entry.placement_reason}
                     </title>
                   </rect>
+                  {entry.locked && run.width > 14 ? (
+                    <text className="timeline-lock" x={run.x + run.width - 12} y={barTop + 12}>
+                      🔒
+                    </text>
+                  ) : null}
                   {run.width > 48 ? (
                     <>
                       <text className="timeline-label" x={run.x + 4} y={barTop + 12}>

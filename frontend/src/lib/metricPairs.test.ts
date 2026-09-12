@@ -6,7 +6,7 @@ describe("metricPairs", () => {
   it("formats the spec transitions per unit", () => {
     expect(formatPairTransition("on_time_pct", { label: "On-time delivery", before: 87, after: 94, delta: 7 })).toBe("87% → 94%");
     expect(formatPairTransition("avg_lateness_hours", { label: "Average lateness", before: 8.2, after: 2.4, delta: -5.8 })).toBe("8.2h → 2.4h");
-    expect(formatPairTransition("total_setup_hours", { label: "Setup hours", before: 126, after: 101, delta: -25 })).toBe("126.0h → 101.0h");
+    expect(formatPairTransition("total_setup_hours", { label: "Setup hours", before: 126, after: 101, delta: -25 })).toBe("126h → 101h");
     expect(formatMetricValue("revenue_at_risk", 8_535_733)).toBe("₹85.4 L");
     expect(formatMetricDelta("on_time_pct", 7)).toBe("+7.0 pt");
   });

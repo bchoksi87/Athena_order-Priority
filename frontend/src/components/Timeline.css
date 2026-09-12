@@ -66,3 +66,11 @@
   fill: var(--fg-muted);
   font-size: 10px;
 }
+
+.timeline-nonworking {
+  fill: var(--gantt-nonworking);
+}
+.timeline-lock {
+  font-size: 9px;
+  pointer-events: none;
+}

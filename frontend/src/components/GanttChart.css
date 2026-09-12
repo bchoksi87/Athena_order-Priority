@@ -171,3 +171,85 @@
   margin-right: 4px;
   vertical-align: -1px;
 }
+
+/* Grouped rows, virtualised labels, idle shading, clusters and compare-mode ghosts */
+.gantt-labels {
+  position: sticky;
+  left: 0;
+}
+.gantt-label,
+.gantt-group {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+}
+.gantt-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  background: var(--bg-panel-raised);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.gantt-group-count {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+.gantt-group-band {
+  fill: var(--bg-panel-raised);
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+.gantt-nonworking {
+  fill: var(--gantt-nonworking);
+}
+.gantt-cluster {
+  cursor: pointer;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.5;
+  opacity: 0.9;
+}
+.gantt-cluster:hover {
+  filter: brightness(1.15);
+}
+.gantt-ghost {
+  fill: var(--fg-faint);
+  fill-opacity: 0.18;
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+.gantt-ghost-removed {
+  stroke: var(--status-late);
+  fill: var(--status-late);
+  fill-opacity: 0.1;
+}
+.gantt-bar-moved,
+.gantt-bar-added {
+  stroke: var(--fg);
+  stroke-width: 1.25;
+}
+.gantt-bar-added {
+  stroke-dasharray: 2 2;
+}
+.gantt-legend-ghost {
+  background: transparent;
+  border: 1px dashed var(--fg-muted);
+}
+.gantt-legend-ghost-removed {
+  background: var(--status-late-soft);
+  border: 1px dashed var(--status-late);
+}
+.gantt-legend-moved {
+  background: var(--status-running);
+  border: 1px solid var(--fg);
+}
