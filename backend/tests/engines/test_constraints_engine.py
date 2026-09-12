@@ -88,7 +88,8 @@ class TestEligibleMachines:
         assert result.rejected["CNC-01"][0].constraint_key == "locked_machine_assignment"
 
     def test_check_machine_lists_all_violations(self, constraint_engine: ConstraintEngine) -> None:
-        order = make_order(required_machine_id="CNC-09", machine_group="G")
+        # order-level machine/group requirements apply to the order's primary process (packing here)
+        order = make_order(required_machine_id="CNC-09", machine_group="G", process_type=ProcessType.PACKING)
         snap = make_snapshot(orders=[order])
         ctx = ConstraintContext(snapshot=snap, at=NOW, config=constraint_engine.config, order=order)
         violations = constraint_engine.check_machine(

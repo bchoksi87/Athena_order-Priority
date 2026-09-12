@@ -30,6 +30,7 @@ from app.domain.enums import (
 from app.domain.models import Machine, Operation, Order
 from app.domain.results import PriorityResult, ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
+from app.engines.constraints.hard import is_primary_operation
 
 log = structlog.get_logger(__name__)
 
@@ -138,9 +139,12 @@ def operation_material_id(op: Operation | None, order: Order) -> str | None:
 
 
 def operation_tooling_ids(op: Operation | None, order: Order) -> set[str]:
-    ids = set(order.tooling_requirement)
-    if op is not None:
-        ids |= op.tooling_ids
+    """Tooling the step needs: its own list plus, for the order's primary process, the order-level one."""
+    if op is None:
+        return set(order.tooling_requirement)
+    ids = set(op.tooling_ids)
+    if is_primary_operation(op, order):
+        ids |= order.tooling_requirement
     return ids
 
 
@@ -242,9 +246,11 @@ class ResourceResolver:
 
     Resolution order (``process`` is always the operation type):
 
-    1. the order's required machine or the operation's assigned machine;
+    1. the operation's assigned machine, else (primary operation only) the
+       order's required machine;
     2. an explicit eligible-machine list, when its members agree on the key;
-    3. the routing's machine group (its members must agree for other keys);
+    3. the routing's machine group — the order-level group counts for the
+       primary operation only (its members must agree for other keys);
     4. the machines supporting the operation's process type, when they agree.
 
     Anything else is ``None`` and callers report the demand as unallocated
@@ -280,14 +286,15 @@ class ResourceResolver:
         if dimension == "process":
             return op.operation_type.value
         machines = self.snapshot.machines
-        assigned = order.required_machine_id or op.machine_id
+        primary = is_primary_operation(op, order)
+        assigned = op.machine_id or (order.required_machine_id if primary else None)
         if assigned is not None and assigned in machines:
             return machine_key(machines[assigned], dimension)
         if op.eligible_machine_ids:
             known = [machines[m] for m in sorted(op.eligible_machine_ids) if m in machines]
             if known:
                 return _unique(machine_key(m, dimension) for m in known)
-        group = op.machine_group or order.machine_group
+        group = op.machine_group or (order.machine_group if primary else None)
         if group is not None:
             return self._key_for_group(group, dimension)
         return self._key_for_process(op.operation_type, dimension)

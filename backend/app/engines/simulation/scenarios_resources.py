@@ -135,6 +135,27 @@ class AddMachineScenario(ScenarioBase):
             machine.calendar_id = self.calendar_id
         add_note(machine.attributes, f"simulated machine cloned from {self.clone_of_machine_id}")
         snapshot.machines[self.new_machine_id] = machine
+        # Tool and material releases are keyed by machine id on the tool / material side:
+        # whatever is released for the source machine is released for its clone.
+        released_tools = [
+            t.tooling_id
+            for t in snapshot.tooling.values()
+            if self.clone_of_machine_id in t.compatible_machine_ids
+        ]
+        for tooling_id in released_tools:
+            snapshot.tooling[tooling_id].compatible_machine_ids.add(self.new_machine_id)
+        released_materials = [
+            m.material_id
+            for m in snapshot.materials.values()
+            if self.clone_of_machine_id in m.compatible_machine_ids
+        ]
+        for material_id in released_materials:
+            snapshot.materials[material_id].compatible_machine_ids.add(self.new_machine_id)
+        if released_tools or released_materials:
+            effect.note(
+                f"{self.new_machine_id} inherits {len(released_tools)} tool and "
+                f"{len(released_materials)} material release(s) from {self.clone_of_machine_id}"
+            )
         effect.touch_machines(self.new_machine_id)
         effect.note(f"Added machine {self.new_machine_id} (clone of {self.clone_of_machine_id})")
 

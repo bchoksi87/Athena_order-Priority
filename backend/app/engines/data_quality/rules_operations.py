@@ -5,7 +5,10 @@ completed step with no cycle time is irrelevant to the schedule, and reporting
 it would bury the real problems. Each rule resolves order-level fallbacks
 (``Order.estimated_*``, ``Order.machine_group`` ...) exactly the way the
 scheduling engines do, so a value is only reported missing when the scheduler
-would really have nothing to work with.
+would really have nothing to work with. Order-level machine references
+(``required_machine_id``, ``machine_group``) describe the order's primary
+process and are therefore only applied to operations of that process type
+(:func:`~app.engines.constraints.hard.is_primary_operation`).
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from app.domain.enums import DataQualityCode, DataQualitySeverity, ProcessType
 from app.domain.models import Machine, Operation, Order
 from app.domain.results import DataQualityIssue
 from app.domain.snapshot import PlanningSnapshot
+from app.engines.constraints.hard import is_primary_operation
 from app.engines.data_quality.base import (
     ENTITY_OPERATION,
     DataQualityContext,
@@ -136,12 +140,13 @@ def collect_machine_refs(op: Operation, order: Order, ctx: DataQualityContext) -
         referenced.append(("machine_group", str(op.machine_group)))
         for m in ctx.machines_by_group.get(str(op.machine_group), ()):
             add(m)
-    if not is_blank(order.required_machine_id):
+    primary = is_primary_operation(op, order)
+    if primary and not is_blank(order.required_machine_id):
         referenced.append(("order.required_machine_id", str(order.required_machine_id)))
         m = machines.get(str(order.required_machine_id))
         if m is not None:
             add(m)
-    if not is_blank(order.machine_group):
+    if primary and not is_blank(order.machine_group):
         referenced.append(("order.machine_group", str(order.machine_group)))
         for m in ctx.machines_by_group.get(str(order.machine_group), ()):
             add(m)
@@ -432,6 +437,7 @@ class ConflictingMachineCapabilityRule:
                 out.append(("eligible_machine_ids", m))
         if (
             is_blank(op.machine_id)
+            and is_primary_operation(op, order)
             and not is_blank(order.required_machine_id)
             and (m := machines.get(str(order.required_machine_id))) is not None
         ):
@@ -465,7 +471,7 @@ class ConflictingMachineCapabilityRule:
     def _check_groups(op: Operation, order: Order, ctx: DataQualityContext) -> Iterable[DataQualityIssue]:
         for field_name, group in (
             ("machine_group", op.machine_group),
-            ("order.machine_group", order.machine_group),
+            ("order.machine_group", order.machine_group if is_primary_operation(op, order) else None),
         ):
             if is_blank(group):
                 continue

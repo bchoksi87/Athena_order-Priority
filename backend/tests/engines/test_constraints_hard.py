@@ -178,12 +178,15 @@ class TestMachineOperable:
         v = MachineOperable().check(make_operation(), make_machine(status=status), ctx_for(make_order()))
         assert v is not None and "no scheduled return" in v.message
 
-    def test_down_with_known_end_still_violates_but_reports_return(self) -> None:
+    def test_down_with_known_end_is_eligible(self) -> None:
+        # the calendar removes the breakdown window and the scheduler starts the machine at its return
         machine = make_machine(
             status=MachineStatus.DOWN, unplanned_downtime=[window(at(hours=-1), 5, "breakdown")]
         )
-        v = MachineOperable().check(make_operation(), machine, ctx_for(make_order()))
-        assert v is not None and v.details["resolves_at"] == at(hours=4)
+        assert MachineOperable().check(make_operation(), machine, ctx_for(make_order())) is None
+        past = make_machine(status=MachineStatus.DOWN, unplanned_downtime=[window(at(days=-2), 5, "old")])
+        v = MachineOperable().check(make_operation(), past, ctx_for(make_order()))
+        assert v is not None and "no scheduled return" in v.message
 
     def test_maintenance_with_end_is_eligible(self) -> None:
         machine = make_machine(

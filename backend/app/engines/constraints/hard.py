@@ -10,6 +10,12 @@ Quality Engine) instead of silently blocking orders.
 
 Order of evaluation is irrelevant for correctness; the engine evaluates all
 constraints so that an explanation lists every reason a machine was rejected.
+
+Order-level requirements (``Order.required_machine_id``, ``Order.machine_group``,
+``Order.tooling_requirement``) describe the order's *primary* process
+(``Order.process_type``, the first step of its route). They constrain only the
+operations of that process type — a deburring or packing step of a CNC order
+is never pinned to the CNC machine (see :func:`is_primary_operation`).
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.clock import ensure_utc
-from app.domain.enums import LockType, MachineStatus, OperationStatus, OverrideType
+from app.domain.enums import LockType, MachineStatus, OperationStatus, OverrideType, ProcessType
 from app.domain.models import Machine, Operation, Order
 from app.domain.results import Violation
 from app.domain.snapshot import PlanningSnapshot
@@ -35,6 +41,18 @@ def _order_of(op: Operation, ctx: ConstraintContext) -> Order | None:
     if ctx.order is not None and ctx.order.order_id == op.order_id:
         return ctx.order
     return ctx.snapshot.orders.get(op.order_id)
+
+
+def is_primary_operation(op: Operation, order: Order | None) -> bool:
+    """True when ``op`` performs the order's primary process, i.e. the one the order-level
+    machine / group / tooling requirements describe.
+
+    Orders whose process type is unknown (``OTHER``) treat every operation as primary so
+    that an ERP requirement is never silently dropped on incomplete master data.
+    """
+    if order is None:
+        return True
+    return order.process_type is ProcessType.OTHER or op.operation_type == order.process_type
 
 
 def _as_float(value: Any) -> float | None:
@@ -115,7 +133,7 @@ class ExplicitEligibility:
     """Explicit machine lists from the ERP.
 
     * ``op.eligible_machine_ids`` (non-empty) restricts to that list;
-    * ``order.required_machine_id`` restricts to that machine;
+    * ``order.required_machine_id`` restricts the order's primary operation(s) to that machine;
     * ``op.machine_id`` is binding only while the operation is *in progress*
       (work physically on that machine); otherwise it is the ERP-preferred
       machine and handled as a soft preference (:class:`~soft.PreferredMachine`).
@@ -135,6 +153,7 @@ class ExplicitEligibility:
             order is not None
             and order.required_machine_id is not None
             and order.required_machine_id != machine.machine_id
+            and is_primary_operation(op, order)
         ):
             return Violation(
                 self.key,
@@ -163,7 +182,9 @@ class MachineGroup:
         if op.eligible_machine_ids:
             return None
         order = _order_of(op, ctx)
-        group = op.machine_group or (order.machine_group if order is not None else None)
+        group = op.machine_group or (
+            order.machine_group if order is not None and is_primary_operation(op, order) else None
+        )
         if group is None or machine.machine_group == group:
             return None
         return Violation(
@@ -204,8 +225,16 @@ class MaterialCompatibility:
 
 
 def required_tooling_ids(op: Operation, order: Order | None) -> set[str]:
-    """Tooling required by the operation (falls back to the order-level requirement)."""
-    return set(op.tooling_ids) if op.tooling_ids else (set(order.tooling_requirement) if order else set())
+    """Tooling required by the operation.
+
+    Falls back to the order-level ``tooling_requirement`` only for the order's primary
+    operation(s): an end mill required by the CNC step is not needed at deburring.
+    """
+    if op.tooling_ids:
+        return set(op.tooling_ids)
+    if order is not None and is_primary_operation(op, order):
+        return set(order.tooling_requirement)
+    return set()
 
 
 class ToolingCompatibility:
@@ -238,25 +267,24 @@ def maintenance_end_after(machine: Machine, at: datetime) -> datetime | None:
 
 
 class MachineOperable:
-    """Machine status must allow work: DOWN/OFFLINE never; MAINTENANCE only with a known end."""
+    """Machine status must allow work.
+
+    A DOWN / OFFLINE / MAINTENANCE machine is eligible only when one of its
+    downtime windows tells when it comes back (the calendar removes the window
+    and the scheduler starts it at the return; readiness reports the wait).
+    With no scheduled return the machine is rejected.
+    """
 
     key = "machine_operable"
 
     def check(self, op: Operation, machine: Machine, ctx: ConstraintContext) -> Violation | None:
         if machine.status.is_operable:
             return None
-        at = ensure_utc(ctx.at)
-        returns_at = maintenance_end_after(machine, at)
-        if machine.status == MachineStatus.MAINTENANCE and returns_at is not None:
-            return None  # the calendar removes the maintenance window; machine comes back
+        if maintenance_end_after(machine, ensure_utc(ctx.at)) is not None:
+            return None
         details: dict[str, Any] = {"status": machine.status.value}
-        if returns_at is not None:
-            details["resolves_at"] = returns_at
         return Violation(
-            self.key,
-            f"{machine.machine_id} is {machine.status.value}"
-            + (" with no scheduled return" if returns_at is None else f" until {returns_at.isoformat()}"),
-            details,
+            self.key, f"{machine.machine_id} is {machine.status.value} with no scheduled return", details
         )
 
 
@@ -310,7 +338,11 @@ class QuantityRestriction:
 
 
 class LockedMachineAssignment:
-    """An active order/machine lock or LOCK_MACHINE_ASSIGNMENT override pins the machine."""
+    """An active order/machine lock or LOCK_MACHINE_ASSIGNMENT override pins the machine.
+
+    The pin applies to the operations the pinned machine can perform; the other
+    steps of a routed order (e.g. deburring after a locked CNC step) stay free.
+    """
 
     key = "locked_machine_assignment"
 
@@ -318,6 +350,9 @@ class LockedMachineAssignment:
         pinned = pinned_machine_for_order(ctx.snapshot, op.order_id, ctx.at)
         if pinned is None or pinned[0] == machine.machine_id:
             return None
+        target = ctx.snapshot.machines.get(pinned[0])
+        if target is not None and not target.supports_process(op.operation_type):
+            return None  # the lock concerns another step of the route
         return Violation(
             self.key,
             f"order {op.order_id} is locked to {pinned[0]} ({pinned[1]})",
@@ -351,6 +386,7 @@ __all__ = [
     "QuantityRestriction",
     "ToolingCompatibility",
     "default_hard_constraints",
+    "is_primary_operation",
     "maintenance_end_after",
     "part_dimensions",
     "pinned_machine_for_order",
