@@ -279,6 +279,7 @@ export const healthResponse: HealthResponse = {
   database: "ok",
   version: "0.1.0",
   environment: "dev",
+  writeback_mode: "read_only",
   time: "2026-09-12T13:35:04.111741+00:00",
   connector: { name: "mock", reachable: true, message: "mock connector ready", checked_at: "2026-09-12T13:35:04Z", latency_ms: 0.4 },
   last_sync: { run_id: "sync_1", status: "completed", mode: "full", started_at: "2026-09-12T13:18:23Z", finished_at: "2026-09-12T13:18:48Z" },
