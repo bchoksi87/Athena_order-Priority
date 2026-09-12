@@ -5,7 +5,9 @@ import type { PreviewRequest } from "@/api/types";
 import { authHandlers, mockApi, renderPage, type MockApi } from "@/test/utils";
 import { configVersion, previewResponse, priorityConfiguration } from "@/test/apiFixtures";
 
-import PriorityConfigurationPage, { normaliseWeights } from "./PriorityConfigurationPage";
+import { normaliseWeights } from "@/lib/weights";
+
+import PriorityConfigurationPage from "./PriorityConfigurationPage";
 
 describe("normaliseWeights", () => {
   it("normalises enabled weights to 100 and zeroes disabled ones", () => {

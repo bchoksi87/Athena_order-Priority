@@ -67,7 +67,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { path: routes.alerts, label: "Alerts", minRole: "supervisor", readOnly: true, short: "AL" },
       { path: routes.dataQuality, label: "Data Quality", minRole: "planner", readOnly: true, short: "DQ" },
-      { path: routes.audit, label: "Audit Log", minRole: "production_manager", readOnly: true, short: "AU" },
+      { path: routes.audit, label: "Audit Log", minRole: "production_manager", readOnly: false, short: "AU" },
       { path: routes.admin, label: "System Administration", minRole: "admin", readOnly: false, short: "SA" },
     ],
   },

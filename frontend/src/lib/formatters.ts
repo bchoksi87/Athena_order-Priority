@@ -129,3 +129,10 @@ export function shortId(id: string | null | undefined, max = 14): string {
   if (!id) return DASH;
   return id.length <= max ? id : `${id.slice(0, max - 1)}…`;
 }
+
+/** "+28" / "-3" / "+27.4": explanation-line points formatted like the backend renderer (integers without a decimal). */
+export function formatPoints(points: number): string {
+  if (Math.abs(points) < 0.05) return "0";
+  const text = formatSigned(points, 1);
+  return text.endsWith(".0") ? text.slice(0, -2) : text;
+}

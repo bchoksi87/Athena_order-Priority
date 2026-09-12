@@ -23,8 +23,10 @@ Environment (see `.env.example`): `VITE_API_BASE_URL` (default `/api/v1`), `VITE
 src/
   main.tsx              entry; imports global styles
   app/                  App, providers (theme, query client, auth + API client, toasts), router, AppShell, RouteGuard, nav table
-  api/                  client.ts (fetch wrapper), types.ts (mirror of backend domain), one module per resource with typed
-                        functions + TanStack Query hooks, queryKeys.ts
+  api/                  client.ts (fetch wrapper), types/ (enums, models, results, config, api envelopes, system/sync —
+                        mirrors of the OpenAPI components), one module per resource with typed functions + TanStack Query
+                        hooks (orders, overrides, machines, priority, config, customers, alerts, audit, dataQuality, users,
+                        auth, system, sync, schedule, analytics, simulation), queryKeys.ts
   components/           design-system pieces (DataTable, KpiCard, StatusPill, RiskBadge, ScoreBar, ExplanationPanel,
                         GanttChart, Timeline, FilterBar, states, PageHeader, Section, Toolbar, Modal, ConfirmDialog,
                         Toast, Tabs, ThemeToggle, AsyncContent) — each with its own CSS file

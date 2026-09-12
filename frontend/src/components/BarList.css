@@ -9,11 +9,15 @@
 .barlist-item,
 .barlist-btn {
   display: grid;
-  grid-template-columns: minmax(120px, 34%) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(150px, 40%) minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--sp-2);
   font-size: var(--fs-sm);
   width: 100%;
+}
+/* A clickable item hosts the grid inside its button; the button must span the item's columns. */
+.barlist-item > .barlist-btn {
+  grid-column: 1 / -1;
 }
 .barlist-btn {
   border: none;
@@ -47,4 +51,5 @@
 .barlist-value {
   min-width: 48px;
   text-align: right;
+  white-space: nowrap;
 }

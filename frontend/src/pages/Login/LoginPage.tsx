@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { describeError, isApiError } from "@/api/client";
@@ -34,11 +34,6 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
-
-  useEffect(() => {
-    if (error) setError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- clear the error when the user edits the form
-  }, [username, password]);
 
   if (status === "authenticated" && user) {
     return <Navigate to={homeForRole(user.role)} replace />;
@@ -86,7 +81,14 @@ export default function LoginPage() {
         ) : null}
         <label className="field">
           <span className="label">Username</span>
-          <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus={remembered === ""} required aria-invalid={error ? true : undefined} />
+          <input
+            className="input"
+            value={username}
+            onChange={(e) => {
+              setUsername(e.target.value);
+              setError(null);
+            }}
+            autoComplete="username" autoFocus={remembered === ""} required aria-invalid={error ? true : undefined} />
         </label>
         <label className="field">
           <span className="label">Password</span>
@@ -94,7 +96,10 @@ export default function LoginPage() {
             className="input"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+            }}
             onKeyUp={(e) => setCapsLock(typeof e.getModifierState === "function" && e.getModifierState("CapsLock"))}
             autoComplete="current-password"
             autoFocus={remembered !== ""}

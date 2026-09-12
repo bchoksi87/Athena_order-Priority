@@ -17,3 +17,4 @@ export * from "./audit";
 export * from "./dataQuality";
 export * from "./simulation";
 export * from "./system";
+export * from "./sync";

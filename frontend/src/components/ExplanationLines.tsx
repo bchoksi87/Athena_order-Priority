@@ -1,5 +1,5 @@
 import type { ExplanationLine } from "@/api/types";
-import { formatSigned } from "@/lib/formatters";
+import { formatPoints, formatSigned } from "@/lib/formatters";
 
 import "./ExplanationPanel.css";
 
@@ -12,13 +12,6 @@ export interface ExplanationLinesProps {
   showRaw?: boolean;
   /** Hide the section headings (compact drawer use). */
   compact?: boolean;
-}
-
-/** "+28 — Due Date Urgency: Due in 18 hours" formatting, identical to the backend renderer (integers without a decimal). */
-export function formatPoints(points: number): string {
-  if (Math.abs(points) < 0.05) return "0";
-  const text = formatSigned(points, 1);
-  return text.endsWith(".0") ? text.slice(0, -2) : text;
 }
 
 function pointsClass(points: number): string {

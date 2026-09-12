@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { explanationLines } from "@/test/apiFixtures";
 
-import { ExplanationLines, formatPoints } from "./ExplanationLines";
+import { formatPoints } from "@/lib/formatters";
+
+import { ExplanationLines } from "./ExplanationLines";
 
 describe("ExplanationLines", () => {
   it("formats points like the backend renderer", () => {

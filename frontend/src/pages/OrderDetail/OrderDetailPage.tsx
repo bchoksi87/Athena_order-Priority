@@ -30,7 +30,7 @@ import { LOCK_TYPE_LABELS, OVERRIDE_TYPE_LABELS, OVERRIDE_TYPE_TONE, READINESS_L
 import { formatCurrency, formatHours, formatMinutes, formatNumber, formatPct, formatScore } from "@/lib/formatters";
 import { formatDateTime, formatRelative, hoursUntil } from "@/lib/time";
 
-import type { OrderActionKind } from "../shared/OrderActionDialog";
+import type { OrderActionKind } from "../shared/orderActionSpecs";
 import { OrderActions } from "./OrderActions";
 
 const OP_TONE: Record<OperationResponse["operation_status"], "done" | "running" | "hold" | "neutral" | "ready" | "at-risk" | "late"> = {
@@ -277,8 +277,7 @@ export default function OrderDetailPage() {
                 <KpiCard label="Expected completion" value={formatDateTime(completion, "dd MMM HH:mm")} tone={lateness !== null && lateness > 0 ? "late" : completion ? "ready" : "neutral"} hint={lateness !== null && lateness > 0 ? `late by ${formatHours(lateness)}` : completion ? "on time" : "not scheduled"} />
                 <KpiCard label="Pending qty" value={formatNumber(o.pending_quantity)} unit={`/ ${formatNumber(o.quantity)}`} tone="neutral" hint={`${formatNumber(o.completed_quantity)} completed`} />
                 <KpiCard label="Order value" value={formatCurrency(o.order_value)} tone="neutral" hint={o.estimated_margin !== null ? `margin ${formatCurrency(o.estimated_margin)}` : undefined} />
-                <KpiCard label="Production time" value={formatMinutes(d.production_minutes)} tone="neutral" hint={`${d.operations.length} operations`} />
-                <KpiCard label="Risk" value={<RiskBadge level={p?.risk_level ?? null} />} tone={p?.risk_level === "critical" ? "late" : p?.risk_level === "high" ? "blocked" : "neutral"} hint={p?.hours_until_due !== null && p?.hours_until_due !== undefined ? `${formatHours(p.hours_until_due)} until due (engine)` : undefined} />
+                <KpiCard label="Production time" value={formatMinutes(d.production_minutes)} tone="neutral" hint={`${d.operations.length} operation${d.operations.length === 1 ? "" : "s"}${p?.hours_until_due !== null && p?.hours_until_due !== undefined ? ` · ${formatHours(p.hours_until_due)} to due (engine)` : ""}`} />
               </div>
 
               {p?.blocked || dqBlocking.length > 0 ? (

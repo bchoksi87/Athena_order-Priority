@@ -40,10 +40,11 @@ const lockColumns: Column<ScheduleLock>[] = [
   { key: "reason", header: "Reason", cell: (l) => l.reason },
 ];
 
+/** Exception highlighting: late entries first, then locked ones; finished entries stay neutral. */
 function entryRowClass(e: ScheduleEntry, now: Date): string | undefined {
   if (e.expected_lateness_hours !== null && e.expected_lateness_hours > 0) return "row-late";
   if (e.locked) return "row-hold";
-  if (new Date(e.end) < now) return undefined;
+  if (new Date(e.end) < now) return "row-done";
   return undefined;
 }
 

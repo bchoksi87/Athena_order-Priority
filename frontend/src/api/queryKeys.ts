@@ -76,6 +76,9 @@ export const queryKeys = {
   system: {
     health: ["system", "health"] as const,
     metrics: ["system", "metrics"] as const,
-    syncRuns: ["system", "sync-runs"] as const,
+    syncRuns: (params: unknown) => ["system", "sync-runs", params] as const,
+    syncRun: (id: string) => ["system", "sync-run", id] as const,
+    syncStatus: ["system", "sync-status"] as const,
+    syncCapabilities: ["system", "sync-capabilities"] as const,
   },
 } as const;

@@ -26,7 +26,7 @@ export function saveCustomerRules(client: ApiClient, customerId: string, body: C
 }
 
 export function deleteCustomerRules(client: ApiClient, customerId: string, reason: string): Promise<CustomerRuleResponse> {
-  return client.request<CustomerRuleResponse>("DELETE", `/customers/${encodeURIComponent(customerId)}/rules`, { body: { reason } });
+  return client.delete<CustomerRuleResponse>(`/customers/${encodeURIComponent(customerId)}/rules`, { reason });
 }
 
 export function useCustomers(params: CustomersQuery = {}, enabled = true) {

@@ -2,16 +2,22 @@
 import type {
   Alert,
   AuditEntry,
+  CapabilityReportResponse,
   ConfigVersionInfo,
   ExplanationLine,
   ExplanationResponse,
+  HealthResponse,
+  MachineDetail,
   MachineOptions,
+  MetricsResponse,
   OrderDetail,
   OrderListItemResponse,
   PageResponse,
   PreviewResponse,
   PriorityConfigurationResponse,
   PriorityProfile,
+  SyncRunResponse,
+  SyncStatusResponse,
 } from "@/api/types";
 
 export function pageOf<T>(items: T[], page = 1, page_size = 50, total = items.length): PageResponse<T> {
@@ -265,3 +271,121 @@ export function makeAuditEntry(overrides: Partial<AuditEntry> = {}): AuditEntry 
     ...overrides,
   };
 }
+
+// ------------------------------------------------------------ operational
+
+export const healthResponse: HealthResponse = {
+  status: "ok",
+  database: "ok",
+  version: "0.1.0",
+  environment: "dev",
+  time: "2026-09-12T13:35:04.111741+00:00",
+  connector: { name: "mock", reachable: true, message: "mock connector ready", checked_at: "2026-09-12T13:35:04Z", latency_ms: 0.4 },
+  last_sync: { run_id: "sync_1", status: "completed", mode: "full", started_at: "2026-09-12T13:18:23Z", finished_at: "2026-09-12T13:18:48Z" },
+  active_plan: { version_number: 4, status: "draft", generated_at: "2026-09-12T13:19:12Z", quality_score: 34.4 },
+  background_jobs: { enabled: false, running: false, jobs: [] },
+};
+
+export const metricsResponse: MetricsResponse = {
+  requests_total: 142,
+  errors_total: 0,
+  by_status: { "2xx": 142 },
+  by_path: {},
+  counters: {},
+  schedule_generations_total: 4,
+  replans_total: 2,
+  failed_runs_total: 0,
+  sync_runs_total: 3,
+  sync_runs_failed_total: 0,
+  schedule_versions_by_status: { draft: 3, rejected: 1 },
+  active_plan_version: 4,
+  active_alerts_total: 5542,
+  background_jobs_running: false,
+};
+
+export function makeSyncRun(overrides: Partial<SyncRunResponse> = {}): SyncRunResponse {
+  return {
+    run_id: "sync_1",
+    mode: "full",
+    status: "completed",
+    connector: "mock",
+    started_at: "2026-09-12T13:18:23Z",
+    finished_at: "2026-09-12T13:18:48Z",
+    since: null,
+    duration_seconds: 25.19,
+    records_fetched: { customer: 800, order: 5021, operation: 22940 },
+    records_upserted: { customer: 800, order: 5021, operation: 22940 },
+    issues_count: 21,
+    issue_counts: { duplicate_id: 21 },
+    issues: [],
+    issues_truncated: true,
+    reconciliation: {
+      status: "warning",
+      summary: "order: connector 5021 vs stored 5101",
+      deltas: [
+        { entity: "customer", connector_count: 800, stored_count: 800, delta: 0, delta_pct: 0, status: "ok" },
+        { entity: "order", connector_count: 5021, stored_count: 5101, delta: 80, delta_pct: 1.6, status: "warning" },
+      ],
+    },
+    stored_totals: { order: 5101 },
+    pruned_orders: 0,
+    orders_closed_missing: 0,
+    watermark_source: "none",
+    triggered_by: "cli",
+    error_message: null,
+    ...overrides,
+  };
+}
+
+export const syncStatus: SyncStatusResponse = {
+  connector: "mock",
+  health: { connector_name: "mock", healthy: true, checked_at: "2026-09-12T13:35:04Z", latency_ms: 0.01, message: "mock connector ready", details: { orders: 301, machines: 16 } },
+  last_run: makeSyncRun(),
+  last_completed: makeSyncRun(),
+  watermark: "2026-09-12T13:18:23Z",
+  runs_total: 3,
+  checked_at: "2026-09-12T13:35:04Z",
+};
+
+export const capabilityReport: CapabilityReportResponse = {
+  connector_name: "mock",
+  supports_incremental: true,
+  supports_webhooks: false,
+  coverage_pct: 96.5,
+  can_schedule: false,
+  missing_required: ["operation.cycle_minutes_per_unit"],
+  assessments: [
+    { entity: "customer", field: "customer_id", importance: "required", status: "Available", used_by: ["priority"], impact_if_missing: "Orders cannot be linked to customers", recommendation: "Expose the customer master key" },
+    { entity: "operation", field: "cycle_minutes_per_unit", importance: "required", status: "Missing", used_by: ["scheduling"], impact_if_missing: "Run times cannot be computed", recommendation: "Map the routing cycle time column" },
+    { entity: "customer", field: "customer_tier", importance: "recommended", status: "Available", used_by: ["priority"], impact_if_missing: "Customer importance falls back to standard", recommendation: "Derive a tier from revenue band" },
+  ],
+};
+
+export const machineDetail: MachineDetail = {
+  machine: {
+    machine_id: "MC-LATHE-01",
+    machine_name: "TL-250 #1",
+    machine_type: "CNC lathe",
+    process_type: "cnc_machining",
+    machine_group: "LATHE",
+    location: "Bay 2",
+    status: "running",
+    calendar_id: "CAL-2SHIFT",
+    efficiency: 1.05,
+    utilization: 0.72,
+    capacity_hours_per_day: 16,
+    compatible_materials: ["MAT-AL6061", "MAT-SS304"],
+    compatible_processes: ["cnc_machining", "deburring"],
+    tooling_configuration: ["TL-GRV-3-A"],
+    current_material_id: "MAT-AL6061",
+    current_setup_family: "F-A",
+    available_from: null,
+    preferred_rank: 1,
+  },
+  load: { version_number: 4, status: "draft", utilization_pct: 81.5, scheduled_hours: 120.5, setup_hours: 9.25, scheduled_entries: 37, next_free: "2026-09-20T08:00:00Z", horizon_start: "2026-09-12T00:00:00Z", horizon_end: "2026-09-26T00:00:00Z" },
+  calendar: { machine_id: "MC-LATHE-01", calendar_id: "CAL-2SHIFT", name: "Two-shift weekday calendar", timezone: "Asia/Kolkata", shifts: [{ name: "Shift A", start: "06:00", end: "14:00", weekdays: [0, 1, 2, 3, 4], crosses_midnight: false }], holidays: 7, extra_working_days: 0, overtime_windows: 0, downtime_windows: 1, available_from: null, summary: "Calendar 'Two-shift weekday calendar' (Asia/Kolkata): Shift A 06:00-14:00" },
+  calendar_source: "machine",
+  downtime: [{ kind: "planned", start: "2026-10-01T08:00:00Z", end: "2026-10-01T12:00:00Z", reason: "Spindle service" }],
+  locks: [],
+  upcoming: [],
+};

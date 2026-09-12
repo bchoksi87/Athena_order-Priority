@@ -1,32 +1,20 @@
-/** Operational endpoints: /health, /metrics and the (contract §9) ERP sync endpoints. */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+/** Operational endpoints: GET /health and GET /metrics (public). The ERP sync endpoints live in ./sync. */
+import { useQuery } from "@tanstack/react-query";
 
 import type { ApiClient } from "./client";
-import { unwrapList } from "./client";
 import { useApiClient } from "./context";
 import { queryKeys } from "./queryKeys";
-import type { HealthResponse, ListResponse, SyncMode, SyncRun } from "./types";
+import type { HealthResponse, MetricsResponse } from "./types";
 
 export function fetchHealth(client: ApiClient): Promise<HealthResponse> {
   return client.get<HealthResponse>("/health");
 }
 
-export function fetchMetrics(client: ApiClient): Promise<Record<string, unknown>> {
-  return client.get<Record<string, unknown>>("/metrics");
+export function fetchMetrics(client: ApiClient): Promise<MetricsResponse> {
+  return client.get<MetricsResponse>("/metrics");
 }
 
-/** GET /sync/runs — not yet exposed by the backend; callers must treat a 404 as "unavailable". */
-export async function fetchSyncRuns(client: ApiClient): Promise<SyncRun[]> {
-  const res = await client.get<ListResponse<SyncRun>>("/sync/runs");
-  return unwrapList(res);
-}
-
-/** POST /sync/run — not yet exposed by the backend (contract §9). */
-export function runSync(client: ApiClient, mode: SyncMode): Promise<SyncRun> {
-  return client.post<SyncRun>("/sync/run", { mode });
-}
-
-export function useHealth(refetchIntervalMs = 30_000) {
+export function useHealth(refetchIntervalMs: number | false = 30_000) {
   const client = useApiClient();
   return useQuery({
     queryKey: queryKeys.system.health,
@@ -46,18 +34,5 @@ export function useMetrics(refetchIntervalMs: number | false = 30_000) {
   });
 }
 
-export function useSyncRuns(enabled = true) {
-  const client = useApiClient();
-  return useQuery({ queryKey: queryKeys.system.syncRuns, queryFn: () => fetchSyncRuns(client), enabled, retry: false });
-}
-
-export function useRunSync() {
-  const client = useApiClient();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (mode: SyncMode) => runSync(client, mode),
-    onSuccess: async () => {
-      await qc.invalidateQueries();
-    },
-  });
-}
+// Backward-compatible re-exports for callers written against the scaffold's system module.
+export { fetchSyncRuns, runSync, useRunSync, useSyncRuns } from "./sync";

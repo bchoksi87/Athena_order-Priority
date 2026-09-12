@@ -9,10 +9,12 @@ export interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** Render children without the body padding (the child supplies its own .modal-body / .modal-footer, e.g. a form). */
+  flush?: boolean;
 }
 
 /** Lightweight dialog: closes on Escape and backdrop click. */
-export function Modal({ open, title, onClose, children, footer, wide = false }: ModalProps) {
+export function Modal({ open, title, onClose, children, footer, wide = false, flush = false }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -38,7 +40,7 @@ export function Modal({ open, title, onClose, children, footer, wide = false }: 
             ×
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        {flush ? children : <div className="modal-body">{children}</div>}
         {footer ? <div className="modal-footer">{footer}</div> : null}
       </div>
     </div>

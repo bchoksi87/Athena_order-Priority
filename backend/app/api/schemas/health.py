@@ -55,6 +55,9 @@ class HealthResponse(BaseModel):
     database: str
     version: str
     environment: str
+    writeback_mode: str = Field(
+        description="ERP writeback ladder position: read_only | approval | writeback | controlled_auto"
+    )
     time: str
     connector: ConnectorHealthInfo | None = None
     last_sync: LastSyncInfo | None = None

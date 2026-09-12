@@ -10,7 +10,6 @@ import type {
   ReadinessState,
   RiskLevel,
   ScheduleStatus,
-  SyncMode,
 } from "./enums";
 
 // --------------------------------------------------------------- results
@@ -365,22 +364,3 @@ export interface AuditEntry {
   details: Record<string, unknown>;
 }
 
-export interface SyncRun {
-  run_id: string;
-  mode: SyncMode;
-  started_at: string;
-  finished_at: string | null;
-  status: string;
-  records_fetched?: number;
-  records_upserted?: number;
-  errors?: string[];
-  message?: string | null;
-}
-
-export interface HealthResponse {
-  status: string;
-  database: string;
-  version: string;
-  environment: string;
-  time: string;
-}

@@ -5,7 +5,8 @@ import type { MachineOption, OrderDetail } from "@/api/types";
 import { useAuth } from "@/app/auth";
 import { MenuButton } from "@/components/MenuButton";
 
-import { OrderActionDialog, visibleOrderActions, type OrderActionKind } from "../shared/OrderActionDialog";
+import { OrderActionDialog } from "../shared/OrderActionDialog";
+import { visibleOrderActions, type OrderActionKind } from "../shared/orderActionSpecs";
 
 export interface OrderActionsProps {
   detail: OrderDetail;

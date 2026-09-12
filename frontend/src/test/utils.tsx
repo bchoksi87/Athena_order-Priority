@@ -20,7 +20,10 @@ export interface MockRequest {
   body: unknown;
 }
 
-export type MockHandler = unknown | ((req: MockRequest) => unknown | MockResponse);
+export type MockHandlerFn = (req: MockRequest) => unknown;
+
+/** A static JSON body, a MockResponse, or a function of the request (contextually typed). */
+export type MockHandler = MockHandlerFn | MockResponse | object | string | number | boolean | null;
 
 export class MockResponse {
   constructor(
@@ -62,7 +65,7 @@ export function mockApi(routes: Record<string, MockHandler>): MockApi {
     calls.push(req);
     const handler = table.get(`${method} ${url.pathname}`);
     if (handler === undefined) return jsonResponse(404, { error: "not_found", message: `no mock for ${method} ${url.pathname}`, details: {} });
-    const result = typeof handler === "function" ? (handler as (r: MockRequest) => unknown)(req) : handler;
+    const result = typeof handler === "function" ? (handler as MockHandlerFn)(req) : handler;
     if (result instanceof MockResponse) return jsonResponse(result.status, result.body);
     return jsonResponse(200, result);
   });

@@ -141,3 +141,6 @@
 .dt tbody tr.row-blocked td:first-child {
   background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--status-blocked-soft) 6px 8px);
 }
+.dt tbody tr.row-done td {
+  color: var(--fg-muted);
+}

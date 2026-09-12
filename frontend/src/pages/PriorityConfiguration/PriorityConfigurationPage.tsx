@@ -23,20 +23,12 @@ import { TextField } from "@/components/Field";
 import { useToast } from "@/components/Toast";
 import { FACTOR_NAMES } from "@/lib/constants";
 import { FACTOR_HELP, PRIORITY_SECTIONS, PRIORITY_TOP_LEVEL } from "@/lib/configSchema";
-import { diffJson } from "@/lib/diff";
+import { diffJson, formatJsonValue } from "@/lib/diff";
 import { formatNumber, formatPct, formatSigned } from "@/lib/formatters";
+import { normaliseWeights, profileForDiff } from "@/lib/weights";
 
 import { ConfigVersionsPanel } from "../shared/ConfigVersionsPanel";
 import "./PriorityConfiguration.css";
-
-/** Normalised share (0–100) of each enabled weight; disabled or zero-sum weights get 0. */
-export function normaliseWeights(weights: FactorWeight[]): Record<string, number> {
-  const enabled = weights.filter((w) => w.enabled && w.weight > 0);
-  const total = enabled.reduce((s, w) => s + w.weight, 0);
-  const out: Record<string, number> = {};
-  for (const w of weights) out[w.key] = w.enabled && total > 0 ? (100 * w.weight) / total : 0;
-  return out;
-}
 
 const CAT = ["--cat-1", "--cat-2", "--cat-3", "--cat-4", "--cat-5", "--cat-6", "--cat-7", "--cat-8", "--status-hold", "--status-done", "--fg-faint"];
 
@@ -121,7 +113,7 @@ export default function PriorityConfigurationPage() {
 
   const active = configQuery.data?.profile ?? null;
   const draft = edits ?? active;
-  const changes = useMemo(() => (edits && active ? diffJson(active, edits) : []), [edits, active]);
+  const changes = useMemo(() => (edits && active ? diffJson(profileForDiff(active), profileForDiff(edits)) : []), [edits, active]);
   const dirty = changes.length > 0;
   const shares = useMemo(() => normaliseWeights(draft?.weights ?? []), [draft]);
   const rawTotal = useMemo(() => (draft?.weights ?? []).filter((w) => w.enabled).reduce((s, w) => s + w.weight, 0), [draft]);
@@ -308,7 +300,7 @@ export default function PriorityConfigurationPage() {
                     <ul className="reason-list text-xs">
                       {changes.slice(0, 12).map((c) => (
                         <li key={c.path}>
-                          <span className="mono">{c.path}</span>: <span className="tone-late">{String(c.before ?? "—")}</span> → <span className="tone-ready">{String(c.after ?? "—")}</span>
+                          <span className="mono">{c.path}</span>: <span className="tone-late">{formatJsonValue(c.before, 40)}</span> → <span className="tone-ready">{formatJsonValue(c.after, 40)}</span>
                         </li>
                       ))}
                       {changes.length > 12 ? <li className="text-faint">… {changes.length - 12} more</li> : null}

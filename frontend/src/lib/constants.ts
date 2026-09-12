@@ -300,3 +300,31 @@ export const AUDIT_ENTITY_TYPES: readonly string[] = [
   "user",
   "data_quality",
 ];
+
+/** Tone of a sync run / reconciliation status string (completed, running, failed, warning, ok). */
+export function syncStatusTone(status: string): Tone {
+  switch (status) {
+    case "completed":
+    case "succeeded":
+    case "ok":
+      return "ready";
+    case "running":
+    case "started":
+      return "running";
+    case "failed":
+    case "error":
+      return "late";
+    case "warning":
+      return "at-risk";
+    default:
+      return "neutral";
+  }
+}
+
+/** Availability of one ERP field (GET /sync/capabilities); a missing required field is the exception to surface. */
+export function fieldAssessmentTone(status: string, importance: string): Tone {
+  const s = status.toLowerCase();
+  if (s === "available") return "ready";
+  if (s.startsWith("partial")) return "at-risk";
+  return importance === "required" ? "late" : importance === "recommended" ? "blocked" : "neutral";
+}

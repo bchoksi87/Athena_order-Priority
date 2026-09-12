@@ -19,12 +19,14 @@ export function fetchLocks(client: ApiClient, params: LocksQuery = {}): Promise<
   return client.get<LockResponse[]>("/schedule/locks", { ...params });
 }
 
+/** DELETE /overrides/{id}: the mandatory reason is sent as the documented `reason` query parameter (DELETE bodies are dropped by some proxies). */
 export function cancelOverride(client: ApiClient, overrideId: string, reason: string): Promise<OverrideResponse> {
-  return client.request<OverrideResponse>("DELETE", `/overrides/${encodeURIComponent(overrideId)}`, { body: { reason } });
+  return client.delete<OverrideResponse>(`/overrides/${encodeURIComponent(overrideId)}`, { reason });
 }
 
+/** DELETE /expedites/{id} (production manager); reason as query parameter, see cancelOverride. */
 export function cancelExpedite(client: ApiClient, expediteId: string, reason: string): Promise<ExpediteResponse> {
-  return client.request<ExpediteResponse>("DELETE", `/expedites/${encodeURIComponent(expediteId)}`, { body: { reason } });
+  return client.delete<ExpediteResponse>(`/expedites/${encodeURIComponent(expediteId)}`, { reason });
 }
 
 export function unlock(client: ApiClient, lockId: string, reason: string): Promise<LockResponse> {

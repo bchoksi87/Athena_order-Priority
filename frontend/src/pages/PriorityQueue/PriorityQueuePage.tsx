@@ -57,7 +57,8 @@ import {
   statusColumn,
   valueColumn,
 } from "../shared/orderColumns";
-import { OrderActionDialog, visibleOrderActions, type OrderActionKind } from "../shared/OrderActionDialog";
+import { OrderActionDialog } from "../shared/OrderActionDialog";
+import { visibleOrderActions, type OrderActionKind } from "../shared/orderActionSpecs";
 
 const FILTER_KEYS = [
   "search",
@@ -77,7 +78,8 @@ const FILTER_KEYS = [
   "page",
 ] as const;
 
-const DEFAULT_SORT = "priority";
+/** Default order: the engine's rank from the last run (unranked orders last); ties in score keep their rank. */
+const DEFAULT_SORT = "rank";
 
 /** Column key → API sort key, so header clicks become server-side sorts. */
 function sortForColumn(key: string): string | undefined {
@@ -159,11 +161,14 @@ export default function PriorityQueuePage() {
   const [whyOrderId, setWhyOrderId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ orderId: string; action: OrderActionKind; onHold: boolean } | null>(null);
   const [searchDraft, setSearchDraft] = useState(values.search);
+  const [urlSearch, setUrlSearch] = useState(values.search);
+  // When the URL changes underneath us (back button, global search) adopt its value during render.
+  if (values.search !== urlSearch) {
+    setUrlSearch(values.search);
+    setSearchDraft(values.search);
+  }
 
   // Debounce the search box so every keystroke does not hit the server.
-  useEffect(() => {
-    setSearchDraft(values.search);
-  }, [values.search]);
   useEffect(() => {
     if (searchDraft === values.search) return;
     const id = window.setTimeout(() => {
@@ -175,7 +180,7 @@ export default function PriorityQueuePage() {
 
   const page = Math.max(1, Number(values.page) || 1);
   const sortKey = values.sort || DEFAULT_SORT;
-  const sortOrder: SortOrder = values.order === "asc" || values.order === "desc" ? values.order : sortKey === "priority" ? "desc" : "asc";
+  const sortOrder: SortOrder = values.order === "asc" || values.order === "desc" ? values.order : sortKey === "priority" || sortKey === "order_value" || sortKey === "margin" ? "desc" : "asc";
 
   const query = useMemo<OrderListQuery>(
     () => ({
@@ -200,8 +205,11 @@ export default function PriorityQueuePage() {
   );
 
   const orders = useOrders(query);
+  const filtersActive = FILTER_KEYS.some((k) => k !== "sort" && k !== "order" && k !== "page" && values[k] !== "");
+  // Summary strip from API totals; the unfiltered "open" count is the main query's total unless a filter narrows it.
+  const openTotal = useOrders({ page_size: 1 }, filtersActive);
   const totals = {
-    open: useOrders({ page_size: 1 }),
+    open: filtersActive ? openTotal : orders,
     overdue: useOrders({ page_size: 1, due_to: toUtcIso(now) }),
     held: useOrders({ page_size: 1, on_hold: true }),
   };
@@ -216,12 +224,12 @@ export default function PriorityQueuePage() {
 
   const filterFields = useMemo<FilterField[]>(
     () => [
-      { key: "customer_id", label: "Customer", kind: "select", options: (customers.data?.items ?? []).map((c) => ({ value: c.customer_id, label: c.customer_name })) },
+      { key: "customer_id", label: "Customer", kind: "select", width: 220, options: (customers.data?.items ?? []).map((c) => ({ value: c.customer_id, label: c.customer_name })) },
       { key: "due_from", label: "Due from", kind: "date", width: 150 },
       { key: "due_to", label: "Due to", kind: "date", width: 150 },
       { key: "machine_group", label: "Machine group", kind: "select", options: machineGroups.map((g) => ({ value: g, label: g })) },
       { key: "process_type", label: "Process", kind: "select", options: PROCESS_TYPES.map((p) => ({ value: p, label: humanize(p) })) },
-      { key: "machine_id", label: "Machine", kind: "select", options: (machines.data ?? []).map((m) => ({ value: m.machine_id, label: `${m.machine_id} · ${m.machine_name}` })) },
+      { key: "machine_id", label: "Machine", kind: "select", width: 200, options: (machines.data ?? []).map((m) => ({ value: m.machine_id, label: `${m.machine_id} · ${m.machine_name}` })) },
       { key: "risk", label: "Risk", kind: "select", options: RISK_LEVELS.map((r) => ({ value: r, label: r })) },
       { key: "readiness", label: "Readiness", kind: "select", options: Object.entries(READINESS_LABELS).map(([value, label]) => ({ value, label })) },
       { key: "status", label: "Status", kind: "select", options: ORDER_STATUSES.map((s) => ({ value: s, label: humanize(s) })) },

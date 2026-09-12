@@ -42,11 +42,11 @@ describe("PriorityQueuePage", () => {
     expect(within(trs[1]!).getByText("Waiting material")).toBeInTheDocument();
     // First request asked the server for the default sort and paging.
     const first = api.find("GET", "/api/v1/orders")[0]!;
-    expect(first.url.searchParams.get("sort")).toBe("priority");
-    expect(first.url.searchParams.get("order")).toBe("desc");
+    expect(first.url.searchParams.get("sort")).toBe("rank");
+    expect(first.url.searchParams.get("order")).toBe("asc");
     expect(first.url.searchParams.get("page")).toBe("1");
     expect(first.url.searchParams.get("page_size")).toBe("50");
-    expect(await screen.findByText(/277 · sorted by priority desc/)).toBeInTheDocument();
+    expect(await screen.findByText(/277 · sorted by rank asc/)).toBeInTheDocument();
   });
 
   it("sorts server-side when a sortable header is clicked", async () => {
@@ -65,9 +65,11 @@ describe("PriorityQueuePage", () => {
     renderPage(<PriorityQueuePage />, { role: "production_manager", route: "/priority-queue" });
     await screen.findByRole("table", { name: "Priority queue" });
     fireEvent.change(screen.getByLabelText("Risk"), { target: { value: "critical" } });
+    // The filtered list request carries the parameter (the summary strip issues its own unfiltered count requests).
     await waitFor(() => {
-      const last = api.find("GET", "/api/v1/orders").at(-1)!;
-      expect(last.url.searchParams.get("risk")).toBe("critical");
+      const filtered = api.find("GET", "/api/v1/orders").filter((r) => r.url.searchParams.get("risk") === "critical");
+      expect(filtered.length).toBeGreaterThan(0);
+      expect(filtered.at(-1)!.url.searchParams.get("page_size")).toBe("50");
     });
     await waitFor(() => expect(screen.queryByText("SO2609-00093-03")).not.toBeInTheDocument());
   });

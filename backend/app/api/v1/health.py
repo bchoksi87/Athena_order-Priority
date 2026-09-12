@@ -190,6 +190,7 @@ def health(request: Request, response: Response, settings: SettingsDep, clock: C
         database="ok" if db_ok else "unavailable",
         version=settings.app_version,
         environment=settings.environment,
+        writeback_mode=settings.writeback_mode.value,
         time=clock.now().isoformat(),
         connector=connector,
         last_sync=last_sync,
