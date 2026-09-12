@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import structlog
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.clock import Clock
@@ -59,8 +60,8 @@ class AuditService(Service):
             entity_type=entity_type,
             entity_id=entity_id,
             action=action,
-            previous_value=to_jsonable(previous) if previous is not None else None,
-            new_value=to_jsonable(new) if new is not None else None,
+            previous_value=jsonable(previous) if previous is not None else None,
+            new_value=jsonable(new) if new is not None else None,
             reason=reason,
             request_id=self._request_id,
             details=details,
@@ -115,10 +116,17 @@ def _flatten(value: Any, prefix: str, out: dict[str, Any]) -> None:
         out[prefix] = value
 
 
+def jsonable(value: Any) -> Any:
+    """JSON view of a domain value: Pydantic models via ``model_dump``, dataclasses via the codec."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    return to_jsonable(value)
+
+
 def flatten_json(value: Any) -> dict[str, Any]:
     """``{"a.b[0].c": leaf}`` view of a JSON document (deterministic key order)."""
     out: dict[str, Any] = {}
-    _flatten(to_jsonable(value), "", out)
+    _flatten(jsonable(value), "", out)
     return dict(sorted(out.items()))
 
 
@@ -150,4 +158,5 @@ __all__ = [
     "AuditService",
     "flatten_json",
     "json_diff",
+    "jsonable",
 ]

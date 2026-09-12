@@ -20,6 +20,18 @@ from app.core.errors import AuthenticationError
 from app.core.logging import bind_request_context
 from app.core.security import CurrentUser, decode_access_token, ensure_min_role, ensure_read_access
 from app.domain.enums import Role
+from app.services.alert_service import AlertService
+from app.services.audit_service import AuditService
+from app.services.config_service import ConfigService
+from app.services.customer_rule_service import CustomerRuleService
+from app.services.data_quality_service import DataQualityService
+from app.services.expedite_service import ExpediteService
+from app.services.lock_service import LockService
+from app.services.machine_query_service import MachineQueryService
+from app.services.order_query_service import OrderQueryService
+from app.services.override_service import OverrideService
+from app.services.snapshot_service import SnapshotService
+from app.services.user_service import UserService
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -102,4 +114,117 @@ __all__ = [
     "get_request_id",
     "require_min_role",
     "require_read_access",
+]
+
+
+# ------------------------------------------------------------------ services
+# Service factories: one instance per request, sharing the request's session/clock.
+
+
+def get_audit_service(
+    session: SessionDep, clock: ClockDep, request_id: Annotated[str | None, Depends(get_request_id)]
+) -> AuditService:
+    return AuditService(session, clock, request_id=request_id)
+
+
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+
+
+def get_snapshot_service(session: SessionDep, clock: ClockDep) -> SnapshotService:
+    return SnapshotService(session, clock)
+
+
+SnapshotServiceDep = Annotated[SnapshotService, Depends(get_snapshot_service)]
+
+
+def get_override_service(
+    session: SessionDep, clock: ClockDep, audit: AuditServiceDep, snapshots: SnapshotServiceDep
+) -> OverrideService:
+    return OverrideService(session, clock, audit, snapshots)
+
+
+def get_lock_service(
+    session: SessionDep, clock: ClockDep, audit: AuditServiceDep, snapshots: SnapshotServiceDep
+) -> LockService:
+    return LockService(session, clock, audit, snapshots)
+
+
+def get_expedite_service(
+    session: SessionDep, clock: ClockDep, audit: AuditServiceDep, snapshots: SnapshotServiceDep
+) -> ExpediteService:
+    return ExpediteService(session, clock, audit, snapshots)
+
+
+def get_config_service(
+    session: SessionDep, clock: ClockDep, audit: AuditServiceDep, snapshots: SnapshotServiceDep
+) -> ConfigService:
+    return ConfigService(session, clock, audit, snapshots)
+
+
+def get_customer_rule_service(
+    session: SessionDep, clock: ClockDep, audit: AuditServiceDep
+) -> CustomerRuleService:
+    return CustomerRuleService(session, clock, audit)
+
+
+def get_alert_service(session: SessionDep, clock: ClockDep, audit: AuditServiceDep) -> AlertService:
+    return AlertService(session, clock, audit)
+
+
+def get_order_query_service(
+    session: SessionDep, clock: ClockDep, snapshots: SnapshotServiceDep
+) -> OrderQueryService:
+    return OrderQueryService(session, clock, snapshots)
+
+
+def get_machine_query_service(session: SessionDep, clock: ClockDep) -> MachineQueryService:
+    return MachineQueryService(session, clock)
+
+
+def get_data_quality_service(
+    session: SessionDep, clock: ClockDep, snapshots: SnapshotServiceDep, audit: AuditServiceDep
+) -> DataQualityService:
+    return DataQualityService(session, clock, snapshots, audit)
+
+
+def get_user_service(session: SessionDep, clock: ClockDep, audit: AuditServiceDep) -> UserService:
+    return UserService(session, clock, audit)
+
+
+OverrideServiceDep = Annotated[OverrideService, Depends(get_override_service)]
+LockServiceDep = Annotated[LockService, Depends(get_lock_service)]
+ExpediteServiceDep = Annotated[ExpediteService, Depends(get_expedite_service)]
+ConfigServiceDep = Annotated[ConfigService, Depends(get_config_service)]
+CustomerRuleServiceDep = Annotated[CustomerRuleService, Depends(get_customer_rule_service)]
+AlertServiceDep = Annotated[AlertService, Depends(get_alert_service)]
+OrderQueryServiceDep = Annotated[OrderQueryService, Depends(get_order_query_service)]
+MachineQueryServiceDep = Annotated[MachineQueryService, Depends(get_machine_query_service)]
+DataQualityServiceDep = Annotated[DataQualityService, Depends(get_data_quality_service)]
+UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+
+__all__ += [
+    "AlertServiceDep",
+    "AuditServiceDep",
+    "ConfigServiceDep",
+    "CustomerRuleServiceDep",
+    "DataQualityServiceDep",
+    "ExpediteServiceDep",
+    "LockServiceDep",
+    "MachineQueryServiceDep",
+    "OrderQueryServiceDep",
+    "OverrideServiceDep",
+    "SnapshotServiceDep",
+    "UserServiceDep",
+    "get_alert_service",
+    "get_audit_service",
+    "get_config_service",
+    "get_customer_rule_service",
+    "get_data_quality_service",
+    "get_expedite_service",
+    "get_lock_service",
+    "get_machine_query_service",
+    "get_order_query_service",
+    "get_override_service",
+    "get_snapshot_service",
+    "get_user_service",
 ]

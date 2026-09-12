@@ -347,7 +347,9 @@ class TestMachineUnavailable:
         assert states(b) == [ReadinessState.MACHINE_UNAVAILABLE] and "(none)" in b[0].message
         assert b[0].details["candidates"] == 0 and b[0].resolves_at is None
 
-    def test_all_candidates_rejected_with_maintenance_end(self) -> None:
+    def test_down_machines_with_known_return_wait_for_the_earliest(self) -> None:
+        # DOWN with a known return stays eligible (the calendar removes the outage); the order
+        # waits for the earliest return. OFFLINE with no return is rejected outright.
         machines = [
             make_machine(
                 "CNC-01", status=MachineStatus.DOWN, unplanned_downtime=[window(at(hours=-1), 9, "crash")]
@@ -358,10 +360,29 @@ class TestMachineUnavailable:
             ),
         ]
         order, snap = snapshot_with(machines=machines)
+        a = assess_order(order, snap, NOW, CFG)
+        assert a.state is ReadinessState.MACHINE_UNAVAILABLE and a.eligible_machine_ids == [
+            "CNC-01",
+            "CNC-03",
+        ]
+        b = a.blockers
+        assert b[0].resolves_at == at(hours=3) and b[0].details["earliest_machine_id"] == "CNC-03"
+        assert "2 eligible machine(s) down/unavailable" in b[0].message
+        later = assess_order(order, snap, at(hours=2), CFG)
+        assert later.state is ReadinessState.MACHINE_UNAVAILABLE and later.blockers[0].resolves_at == at(
+            hours=3
+        )
+
+    def test_all_candidates_rejected_without_return(self) -> None:
+        machines = [
+            make_machine("CNC-01", status=MachineStatus.DOWN),
+            make_machine("CNC-02", status=MachineStatus.OFFLINE),
+        ]
+        order, snap = snapshot_with(machines=machines)
         b = compute_blockers(order, snap, NOW, CFG)
         assert states(b) == [ReadinessState.MACHINE_UNAVAILABLE]
-        assert b[0].resolves_at == at(hours=3) and b[0].details["rejections"] == {"machine_operable": 3}
-        assert "3 candidate(s)" in b[0].message
+        assert b[0].resolves_at is None and b[0].details["rejections"] == {"machine_operable": 2}
+        assert "2 candidate(s)" in b[0].message
 
     def test_eligible_but_in_maintenance_now(self) -> None:
         machines = [

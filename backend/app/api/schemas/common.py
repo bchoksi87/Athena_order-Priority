@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -51,3 +51,47 @@ class PagingParams(BaseModel):
 
 
 __all__ = ["ErrorResponse", "MessageResponse", "PageMeta", "PagedResponse", "PagingParams"]
+
+
+class PageResponse(BaseModel, Generic[T]):
+    """Page-number pagination envelope used by the resource list endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+    items: list[T]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    has_more: bool
+
+    @classmethod
+    def build(cls, items: list[T], *, total: int, page: int, page_size: int) -> PageResponse[T]:
+        pages = (total + page_size - 1) // page_size if page_size else 0
+        return cls(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=pages,
+            has_more=page * page_size < total,
+        )
+
+
+class ReasonBody(BaseModel):
+    """Base for every mutating request: the reason is mandatory and non-blank."""
+
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(
+        min_length=1,
+        max_length=2000,
+        pattern=r"\S",
+        description="Why this action is taken (audited); must not be blank",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return value.strip()
+
+
+__all__ = [*__all__, "PageResponse", "ReasonBody"]
