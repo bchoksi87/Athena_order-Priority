@@ -145,7 +145,9 @@ def seeded(
         (
             r
             for r in results.values()
-            if r.readiness is ReadinessState.READY and r.order_id in scheduled and not snapshot.orders[r.order_id].on_hold
+            if r.readiness is ReadinessState.READY
+            and r.order_id in scheduled
+            and not snapshot.orders[r.order_id].on_hold
         ),
         key=lambda r: (r.rank or 0, r.order_id),
     )

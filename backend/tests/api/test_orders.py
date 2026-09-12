@@ -56,7 +56,9 @@ def test_sort_by_rank_and_due_date(seeded: Seeded) -> None:
 
 
 def test_invalid_sort_is_422(seeded: Seeded) -> None:
-    response = seeded.client.get("/api/v1/orders", headers=seeded.headers(Role.ADMIN), params={"sort": "nope"})
+    response = seeded.client.get(
+        "/api/v1/orders", headers=seeded.headers(Role.ADMIN), params={"sort": "nope"}
+    )
     assert response.status_code == 422
     assert response.json()["error"] == "validation_error"
 
@@ -89,7 +91,9 @@ def test_filters(seeded: Seeded) -> None:
     assert everything["total"] == len(seeded.dataset.orders)
 
     now = seeded.clock.now()
-    due = seeded.get("/orders", due_from=now.isoformat(), due_to=(now + timedelta(days=3)).isoformat(), page_size=500)
+    due = seeded.get(
+        "/orders", due_from=now.isoformat(), due_to=(now + timedelta(days=3)).isoformat(), page_size=500
+    )
     assert due["total"] > 0
     for item in due["items"]:
         assert now.isoformat().replace("+00:00", "Z") <= item["order"]["due_date"]
@@ -144,7 +148,11 @@ def test_order_detail_shape(seeded: Seeded) -> None:
 def test_order_detail_404(seeded: Seeded) -> None:
     response = seeded.client.get("/api/v1/orders/NOPE", headers=seeded.headers(Role.OPERATOR))
     assert response.status_code == 404
-    assert response.json() == {"error": "not_found", "message": "order 'NOPE' not found", "details": {"order_id": "NOPE"}}
+    assert response.json() == {
+        "error": "not_found",
+        "message": "order 'NOPE' not found",
+        "details": {"order_id": "NOPE"},
+    }
 
 
 def test_explanation_lines_resum_to_score(seeded: Seeded) -> None:
@@ -221,4 +229,6 @@ def test_machines_list_detail_and_schedule(seeded: Seeded) -> None:
         params={"start": seeded.clock.now().isoformat(), "end": seeded.clock.now().isoformat()},
     )
     assert bad.status_code == 422
-    assert seeded.client.get("/api/v1/machines/NOPE", headers=seeded.headers(Role.OPERATOR)).status_code == 404
+    assert (
+        seeded.client.get("/api/v1/machines/NOPE", headers=seeded.headers(Role.OPERATOR)).status_code == 404
+    )

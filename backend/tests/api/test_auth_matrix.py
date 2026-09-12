@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.domain.enums import ROLE_RANK, Role
 from tests.api.conftest import API, Seeded
+
+Headers = Callable[[Role], dict[str, str]]
 
 ALL_ROLES = list(Role)
 
@@ -20,7 +24,13 @@ ENDPOINTS: list[tuple[str, str, dict[str, Any] | None, Role, bool]] = [
     ("POST", "/orders/NOPE/expedite", {"reason": "r"}, Role.PRODUCTION_MANAGER, False),
     ("POST", "/orders/NOPE/hold", {"reason": "r"}, Role.PLANNER, False),
     ("POST", "/orders/NOPE/release", {"reason": "r"}, Role.PLANNER, False),
-    ("POST", "/orders/NOPE/override-priority", {"type": "set", "value": 50, "reason": "r"}, Role.PRODUCTION_MANAGER, False),
+    (
+        "POST",
+        "/orders/NOPE/override-priority",
+        {"type": "set", "value": 50, "reason": "r"},
+        Role.PRODUCTION_MANAGER,
+        False,
+    ),
     ("POST", "/orders/NOPE/force-next", {"reason": "r"}, Role.PRODUCTION_MANAGER, False),
     ("POST", "/orders/NOPE/move", {"target_machine_id": "M", "reason": "r"}, Role.PRODUCTION_MANAGER, False),
     ("DELETE", "/overrides/NOPE", {"reason": "r"}, Role.PRODUCTION_MANAGER, False),
@@ -28,7 +38,13 @@ ENDPOINTS: list[tuple[str, str, dict[str, Any] | None, Role, bool]] = [
     ("GET", "/machines", None, Role.OPERATOR, True),
     ("GET", "/machines/NOPE", None, Role.OPERATOR, True),
     ("GET", "/machines/NOPE/schedule", None, Role.OPERATOR, True),
-    ("POST", "/schedule/lock", {"lock_type": "machine", "machine_id": "NOPE", "reason": "r"}, Role.PRODUCTION_MANAGER, False),
+    (
+        "POST",
+        "/schedule/lock",
+        {"lock_type": "machine", "machine_id": "NOPE", "reason": "r"},
+        Role.PRODUCTION_MANAGER,
+        False,
+    ),
     ("POST", "/schedule/unlock", {"lock_id": "NOPE", "reason": "r"}, Role.PRODUCTION_MANAGER, False),
     ("GET", "/schedule/locks", None, Role.OPERATOR, True),
     ("GET", "/priority/configuration", None, Role.PLANNER, True),
@@ -38,7 +54,13 @@ ENDPOINTS: list[tuple[str, str, dict[str, Any] | None, Role, bool]] = [
     ("POST", "/priority/configuration/versions/999/activate", {"reason": "r"}, Role.ADMIN, False),
     ("POST", "/priority/configuration/preview", {"profile": {}}, Role.PLANNER, False),
     ("GET", "/scheduling/configuration", None, Role.PLANNER, True),
-    ("PUT", "/scheduling/configuration", {"scheduling": {"horizon_days": 3}, "reason": "r"}, Role.ADMIN, False),
+    (
+        "PUT",
+        "/scheduling/configuration",
+        {"scheduling": {"horizon_days": 3}, "reason": "r"},
+        Role.ADMIN,
+        False,
+    ),
     ("GET", "/customers", None, Role.PLANNER, True),
     ("GET", "/customers/NOPE/rules", None, Role.PLANNER, True),
     ("PUT", "/customers/NOPE/rules", {"sla_hours": 24, "reason": "r"}, Role.PRODUCTION_MANAGER, False),
@@ -51,7 +73,13 @@ ENDPOINTS: list[tuple[str, str, dict[str, Any] | None, Role, bool]] = [
     ("GET", "/data-quality/issues", None, Role.PLANNER, True),
     ("POST", "/data-quality/run", None, Role.PLANNER, False),
     ("GET", "/users", None, Role.ADMIN, False),
-    ("POST", "/users", {"username": "x", "password": "password123", "role": "planner", "display_name": "X"}, Role.ADMIN, False),
+    (
+        "POST",
+        "/users",
+        {"username": "x", "password": "password123", "role": "planner", "display_name": "X"},
+        Role.ADMIN,
+        False,
+    ),
     ("PATCH", "/users/NOPE", {"active": False, "reason": "r"}, Role.ADMIN, False),
     ("POST", "/users/NOPE/reset-password", {"password": "password123", "reason": "r"}, Role.ADMIN, False),
 ]
@@ -65,10 +93,17 @@ def _allowed(role: Role, minimum: Role, executive_reads: bool) -> bool:
 
 @pytest.mark.parametrize(("method", "path", "body", "minimum", "executive_reads"), ENDPOINTS)
 def test_role_matrix(
-    seeded: Seeded, method: str, path: str, body: dict[str, Any] | None, minimum: Role, executive_reads: bool
+    app_client: TestClient,
+    auth_headers: Headers,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    minimum: Role,
+    executive_reads: bool,
 ) -> None:
+    """Guards run before handlers, so an unseeded database (404s) is enough to prove the matrix."""
     for role in ALL_ROLES:
-        response = seeded.client.request(method, f"{API}{path}", headers=seeded.headers(role), json=body)
+        response = app_client.request(method, f"{API}{path}", headers=auth_headers(role), json=body)
         if _allowed(role, minimum, executive_reads):
             assert response.status_code != 403, (role, method, path, response.text)
             assert response.status_code < 500, (role, method, path, response.text)
@@ -79,9 +114,14 @@ def test_role_matrix(
 
 @pytest.mark.parametrize(("method", "path", "body", "minimum", "executive_reads"), ENDPOINTS)
 def test_missing_token_is_401(
-    seeded: Seeded, method: str, path: str, body: dict[str, Any] | None, minimum: Role, executive_reads: bool
+    app_client: TestClient,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    minimum: Role,
+    executive_reads: bool,
 ) -> None:
-    response = seeded.client.request(method, f"{API}{path}", json=body)
+    response = app_client.request(method, f"{API}{path}", json=body)
     assert response.status_code == 401
     assert response.json()["error"] == "unauthenticated"
 
@@ -89,6 +129,8 @@ def test_missing_token_is_401(
 def test_executive_is_read_only_everywhere(seeded: Seeded) -> None:
     writes = [(m, p, b) for m, p, b, _min, _x in ENDPOINTS if m != "GET"]
     for method, path, body in writes:
-        response = seeded.client.request(method, f"{API}{path}", headers=seeded.headers(Role.EXECUTIVE), json=body)
+        response = seeded.client.request(
+            method, f"{API}{path}", headers=seeded.headers(Role.EXECUTIVE), json=body
+        )
         assert response.status_code == 403, (method, path)
     assert seeded.get("/orders", role=Role.EXECUTIVE)["total"] > 0
