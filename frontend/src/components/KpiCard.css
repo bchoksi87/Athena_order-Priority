@@ -1,0 +1,106 @@
+.kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  min-height: 84px;
+  border-left-width: 3px;
+}
+.kpi-clickable {
+  cursor: pointer;
+}
+.kpi-clickable:hover {
+  background: var(--bg-panel-raised);
+}
+.kpi-tone-ready {
+  border-left-color: var(--status-ready);
+}
+.kpi-tone-running {
+  border-left-color: var(--status-running);
+}
+.kpi-tone-blocked {
+  border-left-color: var(--status-blocked);
+}
+.kpi-tone-late {
+  border-left-color: var(--status-late);
+}
+.kpi-tone-at-risk {
+  border-left-color: var(--status-at-risk);
+}
+.kpi-tone-hold {
+  border-left-color: var(--status-hold);
+}
+.kpi-tone-neutral {
+  border-left-color: var(--border-strong);
+}
+.kpi-tone-done {
+  border-left-color: var(--status-done);
+}
+.kpi-label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-kpi);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.kpi-unit {
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+}
+.kpi-delta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.kpi-hint {
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-spark {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: var(--sp-3);
+  width: 72px;
+  height: 24px;
+  opacity: 0.85;
+}
+.kpi-skeleton {
+  display: inline-block;
+  width: 60%;
+  height: 26px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--bg-hover), var(--bg-panel-raised), var(--bg-hover));
+  background-size: 200% 100%;
+  animation: kpi-shimmer 1.2s infinite;
+}
+@keyframes kpi-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

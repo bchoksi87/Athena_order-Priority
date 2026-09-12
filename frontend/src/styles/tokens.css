@@ -1,0 +1,206 @@
+/* ---------------------------------------------------------------------------
+   PPSE design tokens — dense industrial "control tower" palette.
+   Dark is the primary theme. Light is selected with [data-theme="light"] or by
+   the OS preference when no explicit choice is stored.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: dark;
+
+  /* Typography */
+  --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+  --fs-kpi: 26px;
+  --lh-tight: 1.2;
+  --lh-normal: 1.45;
+
+  /* Spacing (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+
+  --nav-width: 220px;
+  --topbar-height: 44px;
+  --row-height: 28px;
+
+  /* Surfaces */
+  --bg-app: #0d1117;
+  --bg-nav: #0a0e14;
+  --bg-panel: #131a23;
+  --bg-panel-raised: #18212c;
+  --bg-input: #0f151d;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-selected: rgba(56, 139, 253, 0.16);
+  --bg-stripe: rgba(255, 255, 255, 0.018);
+  --bg-backdrop: rgba(3, 6, 10, 0.72);
+
+  --border: #253040;
+  --border-strong: #34425a;
+  --border-subtle: #1b2430;
+
+  /* Text */
+  --fg: #dce3ec;
+  --fg-muted: #93a1b3;
+  --fg-faint: #5f6d80;
+  --fg-inverse: #0d1117;
+  --fg-link: #6cb2ff;
+
+  /* Brand / accent */
+  --accent: #3b8eea;
+  --accent-strong: #5aa3ff;
+  --accent-soft: rgba(59, 142, 234, 0.18);
+
+  /* Status colours (semantic, used by pills, bars, gantt) */
+  --status-ready: #34c184;
+  --status-ready-soft: rgba(52, 193, 132, 0.18);
+  --status-running: #3b8eea;
+  --status-running-soft: rgba(59, 142, 234, 0.2);
+  --status-blocked: #f0883e;
+  --status-blocked-soft: rgba(240, 136, 62, 0.18);
+  --status-late: #f85149;
+  --status-late-soft: rgba(248, 81, 73, 0.2);
+  --status-at-risk: #e3b341;
+  --status-at-risk-soft: rgba(227, 179, 65, 0.2);
+  --status-hold: #a371f7;
+  --status-hold-soft: rgba(163, 113, 247, 0.2);
+  --status-neutral: #6e7f94;
+  --status-neutral-soft: rgba(110, 127, 148, 0.2);
+  --status-done: #4f8a6a;
+  --status-done-soft: rgba(79, 138, 106, 0.2);
+
+  /* Severity */
+  --sev-info: var(--accent);
+  --sev-warning: var(--status-at-risk);
+  --sev-high: var(--status-blocked);
+  --sev-critical: var(--status-late);
+
+  /* Gantt */
+  --gantt-grid: #1d2733;
+  --gantt-grid-major: #2b3849;
+  --gantt-now: #ff5a5f;
+  --gantt-setup: #7f8ea3;
+  --gantt-nonworking: rgba(255, 255, 255, 0.03);
+
+  /* Categorical palette for "colour by customer" */
+  --cat-1: #4e9af1;
+  --cat-2: #34c184;
+  --cat-3: #e3b341;
+  --cat-4: #f0883e;
+  --cat-5: #a371f7;
+  --cat-6: #39c5cf;
+  --cat-7: #e879a9;
+  --cat-8: #9ccc65;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 24px rgba(0, 0, 0, 0.5);
+  --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--accent);
+}
+
+/* Light theme -------------------------------------------------------------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg-app: #f3f5f8;
+    --bg-nav: #1a222d;
+    --bg-panel: #ffffff;
+    --bg-panel-raised: #f8fafc;
+    --bg-input: #ffffff;
+    --bg-hover: rgba(0, 0, 0, 0.035);
+    --bg-selected: rgba(37, 99, 235, 0.12);
+    --bg-stripe: rgba(0, 0, 0, 0.018);
+    --bg-backdrop: rgba(15, 23, 42, 0.5);
+    --border: #d5dbe4;
+    --border-strong: #b8c2d0;
+    --border-subtle: #e6eaf0;
+    --fg: #1a2230;
+    --fg-muted: #526073;
+    --fg-faint: #8794a6;
+    --fg-inverse: #ffffff;
+    --fg-link: #1f5fbf;
+    --accent: #2563eb;
+    --accent-strong: #1d4ed8;
+    --accent-soft: rgba(37, 99, 235, 0.12);
+    --status-ready: #15803d;
+    --status-ready-soft: rgba(21, 128, 61, 0.14);
+    --status-running: #2563eb;
+    --status-running-soft: rgba(37, 99, 235, 0.14);
+    --status-blocked: #c2540a;
+    --status-blocked-soft: rgba(194, 84, 10, 0.14);
+    --status-late: #c62828;
+    --status-late-soft: rgba(198, 40, 40, 0.14);
+    --status-at-risk: #b7791f;
+    --status-at-risk-soft: rgba(183, 121, 31, 0.16);
+    --status-hold: #6d3fc4;
+    --status-hold-soft: rgba(109, 63, 196, 0.14);
+    --status-neutral: #64748b;
+    --status-neutral-soft: rgba(100, 116, 139, 0.16);
+    --status-done: #3f7a5c;
+    --status-done-soft: rgba(63, 122, 92, 0.16);
+    --gantt-grid: #e5e9ef;
+    --gantt-grid-major: #cfd6df;
+    --gantt-now: #d92d20;
+    --gantt-setup: #7c8a9e;
+    --gantt-nonworking: rgba(0, 0, 0, 0.035);
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.08);
+    --shadow-2: 0 8px 24px rgba(16, 24, 40, 0.16);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-app: #f3f5f8;
+  --bg-nav: #1a222d;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #f8fafc;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.035);
+  --bg-selected: rgba(37, 99, 235, 0.12);
+  --bg-stripe: rgba(0, 0, 0, 0.018);
+  --bg-backdrop: rgba(15, 23, 42, 0.5);
+  --border: #d5dbe4;
+  --border-strong: #b8c2d0;
+  --border-subtle: #e6eaf0;
+  --fg: #1a2230;
+  --fg-muted: #526073;
+  --fg-faint: #8794a6;
+  --fg-inverse: #ffffff;
+  --fg-link: #1f5fbf;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+  --status-ready: #15803d;
+  --status-ready-soft: rgba(21, 128, 61, 0.14);
+  --status-running: #2563eb;
+  --status-running-soft: rgba(37, 99, 235, 0.14);
+  --status-blocked: #c2540a;
+  --status-blocked-soft: rgba(194, 84, 10, 0.14);
+  --status-late: #c62828;
+  --status-late-soft: rgba(198, 40, 40, 0.14);
+  --status-at-risk: #b7791f;
+  --status-at-risk-soft: rgba(183, 121, 31, 0.16);
+  --status-hold: #6d3fc4;
+  --status-hold-soft: rgba(109, 63, 196, 0.14);
+  --status-neutral: #64748b;
+  --status-neutral-soft: rgba(100, 116, 139, 0.16);
+  --status-done: #3f7a5c;
+  --status-done-soft: rgba(63, 122, 92, 0.16);
+  --gantt-grid: #e5e9ef;
+  --gantt-grid-major: #cfd6df;
+  --gantt-now: #d92d20;
+  --gantt-setup: #7c8a9e;
+  --gantt-nonworking: rgba(0, 0, 0, 0.035);
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --shadow-2: 0 8px 24px rgba(16, 24, 40, 0.16);
+}

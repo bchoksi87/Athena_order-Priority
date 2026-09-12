@@ -1,0 +1,59 @@
+.timeline {
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.timeline svg {
+  display: block;
+}
+.timeline-axis text {
+  fill: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.timeline-grid {
+  stroke: var(--gantt-grid);
+}
+.timeline-bar {
+  cursor: pointer;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.5;
+}
+.timeline-bar:hover {
+  filter: brightness(1.15);
+}
+.timeline-bar.selected {
+  stroke: var(--fg);
+  stroke-width: 1.5;
+}
+.timeline-label {
+  fill: #fff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  pointer-events: none;
+}
+.timeline-sub {
+  fill: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  pointer-events: none;
+}
+.timeline-setup {
+  fill: url(#timeline-hatch);
+  stroke: var(--gantt-setup);
+  stroke-width: 0.5;
+}
+.timeline-downtime {
+  fill: var(--status-late-soft);
+}
+.timeline-now {
+  stroke: var(--gantt-now);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.timeline-empty {
+  fill: var(--fg-faint);
+  font-size: 11px;
+}

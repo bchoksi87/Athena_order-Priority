@@ -1,0 +1,132 @@
+.dt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.dt-scroll {
+  overflow: auto;
+  max-height: var(--dt-max-height, none);
+}
+.dt table {
+  width: 100%;
+  font-size: var(--fs-sm);
+}
+.dt th,
+.dt td {
+  padding: 0 var(--sp-2);
+  height: var(--row-height);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.dt-dense th,
+.dt-dense td {
+  height: 24px;
+  font-size: var(--fs-xs);
+}
+.dt thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-panel-raised);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.dt thead tr.dt-filters th {
+  top: var(--row-height);
+  padding: 2px var(--sp-1);
+  height: 26px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.dt-dense thead tr.dt-filters th {
+  top: 24px;
+}
+.dt th.sortable {
+  cursor: pointer;
+}
+.dt th.sortable:hover {
+  color: var(--fg);
+}
+.dt-sort-icon {
+  margin-left: 4px;
+  font-size: 9px;
+  color: var(--accent);
+}
+.dt td.num,
+.dt th.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.dt td.center,
+.dt th.center {
+  text-align: center;
+}
+.dt tbody tr:nth-child(even) {
+  background: var(--bg-stripe);
+}
+.dt tbody tr.clickable {
+  cursor: pointer;
+}
+.dt tbody tr.clickable:hover {
+  background: var(--bg-hover);
+}
+.dt tbody tr.selected {
+  background: var(--bg-selected);
+}
+.dt tbody tr.row-late td:first-child {
+  box-shadow: inset 3px 0 0 var(--status-late);
+}
+.dt tbody tr.row-at-risk td:first-child {
+  box-shadow: inset 3px 0 0 var(--status-at-risk);
+}
+.dt tbody tr.row-blocked td:first-child {
+  box-shadow: inset 3px 0 0 var(--status-blocked);
+}
+.dt tbody tr.row-ready td:first-child {
+  box-shadow: inset 3px 0 0 var(--status-ready);
+}
+.dt tbody tr.row-hold td:first-child {
+  box-shadow: inset 3px 0 0 var(--status-hold);
+}
+.dt-filter-input {
+  width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+}
+.dt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+}
+.dt-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.dt-pager .btn {
+  height: 22px;
+  padding: 0 8px;
+}
+.dt-empty {
+  padding: var(--sp-6);
+  text-align: center;
+  color: var(--fg-muted);
+}

@@ -1,0 +1,61 @@
+"""What-if simulation (DESIGN_CONTRACT §6.5, spec Phase 7): scenarios, engine, diff."""
+
+from app.engines.simulation.base import ScenarioBase, ScenarioEffect
+from app.engines.simulation.diff import default_bottlenecks, diff_schedules, overtime_hours, render_summary
+from app.engines.simulation.engine import PlanOutcome, SimulationEngine, SimulationScheduler
+from app.engines.simulation.money import format_money
+from app.engines.simulation.scenarios import (
+    SCENARIO_KINDS,
+    AddMachineScenario,
+    DueDateChangeScenario,
+    ExpediteOrdersScenario,
+    ExtraShiftScenario,
+    ExtraWorkingDayScenario,
+    HoldOrdersScenario,
+    MachineDownScenario,
+    MaterialArrivalScenario,
+    MaterialDelayScenario,
+    OutsourceScenario,
+    PrioritizeCustomerScenario,
+    RouteStep,
+    Scenario,
+    UrgentOrderSpec,
+    UrgentOrdersScenario,
+    WeightChangeScenario,
+    apply_scenarios,
+    parse_scenario,
+    parse_scenarios,
+)
+
+__all__ = [
+    "SCENARIO_KINDS",
+    "AddMachineScenario",
+    "DueDateChangeScenario",
+    "ExpediteOrdersScenario",
+    "ExtraShiftScenario",
+    "ExtraWorkingDayScenario",
+    "HoldOrdersScenario",
+    "MachineDownScenario",
+    "MaterialArrivalScenario",
+    "MaterialDelayScenario",
+    "OutsourceScenario",
+    "PlanOutcome",
+    "PrioritizeCustomerScenario",
+    "RouteStep",
+    "Scenario",
+    "ScenarioBase",
+    "ScenarioEffect",
+    "SimulationEngine",
+    "SimulationScheduler",
+    "UrgentOrderSpec",
+    "UrgentOrdersScenario",
+    "WeightChangeScenario",
+    "apply_scenarios",
+    "default_bottlenecks",
+    "diff_schedules",
+    "format_money",
+    "overtime_hours",
+    "parse_scenario",
+    "parse_scenarios",
+    "render_summary",
+]

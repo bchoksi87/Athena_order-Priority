@@ -1,0 +1,61 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.pill-ready {
+  color: var(--status-ready);
+  background: var(--status-ready-soft);
+}
+.pill-running {
+  color: var(--status-running);
+  background: var(--status-running-soft);
+}
+.pill-blocked {
+  color: var(--status-blocked);
+  background: var(--status-blocked-soft);
+}
+.pill-late {
+  color: var(--status-late);
+  background: var(--status-late-soft);
+}
+.pill-at-risk {
+  color: var(--status-at-risk);
+  background: var(--status-at-risk-soft);
+}
+.pill-hold {
+  color: var(--status-hold);
+  background: var(--status-hold-soft);
+}
+.pill-neutral {
+  color: var(--fg-muted);
+  background: var(--status-neutral-soft);
+}
+.pill-done {
+  color: var(--status-done);
+  background: var(--status-done-soft);
+}
+.pill-outline {
+  background: transparent;
+  border-color: currentColor;
+}
+.pill-sm {
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+}
