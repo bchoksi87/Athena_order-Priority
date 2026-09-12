@@ -12,14 +12,24 @@ Algorithm (deterministic, O(orders x ops x eligible machines x calendar look-ups
 4. Each pending operation of an order, in sequence, is released at
    ``max(previous operation end, dependency completion, blocker resolution)``,
    ranked over its eligible machines (:mod:`machine_assignment`) and placed on
-   the recommended one; the machine state advances (next free, setup family,
-   material, tooling, load). Machines are never back-filled: every placement
-   goes after the machine's last job, which keeps the loop linear and the
-   machine sequence equal to the processing order.
+   the recommended one. Machines are **back-filled**: every machine keeps its
+   placed entries as a time-ordered list of busy slots
+   (:mod:`timeline`), and a placement takes the *earliest gap* the job fits
+   into - setup derived from the slot before the gap, the calendar and any
+   reserved lock windows respected, and the following slot's recorded setup
+   left sufficient (the timeline's successor rule) - falling back to the tail
+   after the machine's last job. A high-priority job whose upstream operation
+   finishes late therefore no longer holds the idle downstream machine for
+   every lower-priority job. Locked and frozen entries are ordinary slots
+   that never move. The tail :class:`MachineState` advances as before
+   (``next_free`` = end of the last job, setup family, material, tooling,
+   load); a back-filled entry only adds load and tooling.
 5. After a placement, a bounded *batching lookahead* (:mod:`batching`) may pull
    a later order that shares the machine's new setup forward onto the same
-   machine. The lookahead runs from a work-list at the top level, never
-   recursively, so long same-setup chains cannot exhaust the stack.
+   machine; a pulled job is appended at the tail (behind the setup it shares),
+   never back-filled. The lookahead reasons about the tail state only and
+   runs from a work-list at the top level, never recursively, so long
+   same-setup chains cannot exhaust the stack.
 
 Failures never abort the run: an operation without eligible machine / cycle
 time / calendar becomes an :class:`UnscheduledItem` with a reason code and the
@@ -59,12 +69,13 @@ from app.engines.scheduling.candidates import OrderCandidate
 from app.engines.scheduling.locks import LockIndex
 from app.engines.scheduling.machine_assignment import (
     CYCLE_TIME_UNKNOWN,
+    SlotPlacement,
     build_recommendation,
-    place_on_calendar,
     rank_machines,
 )
 from app.engines.scheduling.setup import base_setup_minutes, compute_setup, describe_setup
 from app.engines.scheduling.state import apply_entry_to_state
+from app.engines.scheduling.timeline import MachineTimeline
 
 log = structlog.get_logger(__name__)
 
@@ -117,6 +128,7 @@ class RunContext:
     locks: LockIndex
     frozen_machines: set[str]
     batch_lookahead: int
+    timelines: dict[str, MachineTimeline] = field(default_factory=dict)  # machine_id -> busy slots
     entries: list[ScheduleEntry] = field(default_factory=list)
     unscheduled: list[UnscheduledItem] = field(default_factory=list)
     recommendations: dict[str, MachineRecommendation] = field(default_factory=dict)
@@ -195,10 +207,21 @@ class RunContext:
         )
         self.failed_orders.add(order.order_id)
 
-    def record_entry(self, entry: ScheduleEntry, op: Operation, order: Order, machine: Machine) -> None:
+    def record_entry(
+        self,
+        entry: ScheduleEntry,
+        op: Operation,
+        order: Order,
+        machine: Machine,
+        setup_basis: str | None = None,
+    ) -> None:
         state = self.states[machine.machine_id]
         before = state.scheduled_minutes
-        apply_entry_to_state(state, entry, op, order)
+        timeline = self.timelines.get(machine.machine_id)
+        is_tail = timeline is None or entry.setup_start >= timeline.tail_end
+        apply_entry_to_state(state, entry, op, order, tail=is_tail)
+        if timeline is not None:
+            timeline.add_entry(entry, op, order, setup_basis=setup_basis)
         self._group_load[machine.machine_group] += state.scheduled_minutes - before
         self.entries.append(entry)
         self.placed[op.operation_id] = entry
@@ -403,6 +426,7 @@ class ListScheduler:
             own = (ensure_utc(slot_lock.window.start), ensure_utc(slot_lock.window.end))
             for machine_id in list(reserved):
                 reserved[machine_id] = [w for w in reserved[machine_id] if (w.start, w.end) != own]
+        slots: dict[str, SlotPlacement] = {}
         ranked = rank_machines(
             op,
             order,
@@ -416,6 +440,9 @@ class ListScheduler:
             release=earliest,
             reserved=reserved,
             group_average_load=ctx.group_average_load(usable[0]),
+            timelines=ctx.timelines,
+            tail_only=batch_note is not None,  # a batched job follows the setup it shares
+            slot_out=slots,
         )
         if first_op:
             ctx.recommendations[order.order_id] = build_recommendation(op, ranked, eligibility)
@@ -428,10 +455,9 @@ class ListScheduler:
             ctx.unschedule(order, op, "missing_cycle_time", f"{CYCLE_TIME_UNKNOWN} on {where}", remaining)
             return None
         machine = ctx.snapshot.machines[best.machine_id]
-        entry = self._build_entry(
-            candidate, op, machine, best, earliest, reserved, batch_note, is_last, locked=slot_locked
-        )
-        ctx.record_entry(entry, op, order, machine)
+        slot = slots[best.machine_id]
+        entry = self._build_entry(candidate, op, machine, best, slot, batch_note, is_last, locked=slot_locked)
+        ctx.record_entry(entry, op, order, machine, slot.estimate.basis)
         if batch_note is not None:
             ctx.batched_entries += 1
         return machine.machine_id
@@ -462,28 +488,21 @@ class ListScheduler:
         op: Operation,
         machine: Machine,
         best: MachineCandidate,
-        earliest: datetime,
-        reserved: Mapping[str, Sequence[TimeWindow]],
+        slot: SlotPlacement,
         batch_note: str | None,
         is_last: bool,
         *,
         locked: bool,
     ) -> ScheduleEntry:
+        """Entry for the slot the ranking found (same instants, setup and reasons as the ranking)."""
         ctx = self.ctx
         order = candidate.order
-        state = ctx.states[machine.machine_id]
-        start_floor = max(earliest, state.next_free)
-        if machine.available_from is not None:
-            start_floor = max(start_floor, ensure_utc(machine.available_from))
-        estimate = compute_setup(
-            op, machine, state, ctx.config, order=order, snapshot=ctx.snapshot, at=start_floor
-        )
-        placement = place_on_calendar(
-            ctx.calendars[machine.machine_id],
-            start_floor,
-            estimate.minutes,
-            best.run_minutes,
-            reserved.get(machine.machine_id, ()),
+        estimate = slot.estimate
+        calendar = ctx.calendars[machine.machine_id]
+        start = (
+            calendar.add_work_minutes(slot.setup_start, estimate.minutes)
+            if estimate.minutes > 0
+            else slot.setup_start
         )
         priority = candidate.priority
         headline = [best.reasons[0]] if best.reasons else []
@@ -501,15 +520,17 @@ class ListScheduler:
             reason += f"; {candidate.blocker_note}"
         if batch_note:
             reason += f"; batched: {batch_note}"
+        if slot.in_gap:
+            reason += "; back-filled into idle time ahead of later-placed work"
         return ScheduleEntry(
             entry_id=entry_id_for(op.operation_id),
             machine_id=machine.machine_id,
             order_id=order.order_id,
             operation_id=op.operation_id,
             sequence_on_machine=0,
-            setup_start=placement.setup_start,
-            start=placement.start,
-            end=placement.end,
+            setup_start=slot.setup_start,
+            start=start,
+            end=slot.end,
             setup_minutes=estimate.minutes,
             run_minutes=best.run_minutes,
             quantity=op.pending_quantity,

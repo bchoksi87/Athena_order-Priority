@@ -10,15 +10,32 @@ Required hours per (resource key, period):
 * **unscheduled** demand — pending operations without an entry (every pending
   operation when no schedule is given, plus blocked / failed orders when
   there is one): their ERP-estimated setup + run minutes are booked into the
-  *first* period of the resource the operation targets (assigned machine,
-  explicit eligible list or machine group, see
-  ``common.resolve_operation_resource``). Demand whose resource cannot be
-  resolved is reported as ``unallocated_hours`` instead of being guessed.
+  period that contains the order's due date — the *first* period for overdue
+  and undated work — on the resource the operation targets (assigned
+  machine, explicit eligible list or machine group, see
+  ``common.resolve_operation_resource``). Work due after the horizon is not
+  required inside it and is reported as ``beyond_horizon_hours`` instead of
+  inflating the first period. Demand whose resource cannot be resolved is
+  reported as ``unallocated_hours`` instead of being guessed.
+
+Demand that is *unknown* is never counted, only reported: operations without
+a cycle time (``missing_cycle_operations``) and operations whose cycle time
+exceeds ``DataQualityConfig.max_cycle_minutes_per_unit``
+(``implausible_cycle_operations`` - a unit error would otherwise book
+thousands of phantom hours and a "585 % load"). Orders in
+``exclude_order_ids`` - the orders the planning pipeline withholds from
+scheduling because of blocking data-quality issues - contribute no
+unscheduled demand either (``excluded_operations``); their scheduled entries,
+if any, still count.
 
 Available hours per (key, period) = Σ over the machines mapped to the key of
 ``MachineCalendar.available_hours(period)``; machines without a calendar, and
-DOWN / OFFLINE / MAINTENANCE machines with no ``available_from`` return time,
-add nothing and are counted in ``notes``. Periods are plant-local days or ISO
+DOWN / OFFLINE / MAINTENANCE machines with neither an ``available_from`` return
+time nor a downtime window still ahead (``maintenance_end_after`` — the rule
+the scheduler applies when it excludes a machine), add nothing and are counted
+in ``notes``. A machine with a known return contributes the working time its
+calendar keeps after the downtime, exactly the time the scheduler plans on.
+Periods are plant-local days or ISO
 weeks covering ``[now, now + horizon_days)``; the first period starts at
 ``now`` (past hours are not available), the last ends at the horizon.
 
@@ -30,7 +47,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 from typing import Any, Literal
@@ -39,20 +56,24 @@ import structlog
 
 from app.core.clock import ensure_utc
 from app.core.errors import ValidationError
+from app.domain.config import DataQualityConfig
 from app.domain.results import CapacityRow, ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
 from app.engines.analytics.common import (
     DIMENSIONS,
     Dimension,
     ResourceResolver,
+    cycle_is_implausible,
     estimate_operation_minutes,
     local_date,
     local_midnight,
     machine_key,
+    operation_cycle_minutes,
     plant_timezone,
     week_start,
 )
 from app.engines.calendar.calendar import MachineCalendar
+from app.engines.constraints.hard import maintenance_end_after
 
 log = structlog.get_logger(__name__)
 
@@ -96,6 +117,11 @@ class CapacityReport:
     unallocated_operations: int = 0
     estimated_hours: float = 0.0  # unscheduled demand that was allocated
     scheduled_hours: float = 0.0
+    missing_cycle_operations: int = 0  # unknown demand: no cycle time anywhere
+    implausible_cycle_operations: int = 0  # unknown demand: cycle above the plausibility limit
+    excluded_operations: int = 0  # pending operations of orders withheld by data quality
+    beyond_horizon_hours: float = 0.0  # unscheduled demand due after the horizon (not required in it)
+    beyond_horizon_operations: int = 0
     notes: list[str] = field(default_factory=list)
 
     def __iter__(self) -> Iterator[CapacityRow]:
@@ -194,8 +220,16 @@ def compute_capacity(
     horizon_days: float,
     dimension: Dimension = "machine_group",
     period: Period = "week",
+    *,
+    data_quality: DataQualityConfig | None = None,
+    exclude_order_ids: Collection[str] | None = None,
 ) -> CapacityReport:
-    """Required vs available hours per ``dimension`` key and ``period`` (see module docstring)."""
+    """Required vs available hours per ``dimension`` key and ``period`` (see module docstring).
+
+    ``data_quality`` supplies the cycle-time plausibility limit (defaults to
+    :class:`DataQualityConfig` defaults); ``exclude_order_ids`` are orders whose
+    unscheduled work is not demand (withheld from scheduling by data quality).
+    """
     if dimension not in DIMENSIONS:
         raise ValidationError(
             f"unknown capacity dimension {dimension!r}", details={"allowed": list(DIMENSIONS)}
@@ -225,8 +259,12 @@ def compute_capacity(
         if calendar is None:
             no_calendar.append(machine_id)
             continue
-        if not machine.status.is_operable and machine.available_from is None:
-            inoperable.append(machine_id)  # down with no return time: the calendar cannot know
+        if (
+            not machine.status.is_operable
+            and machine.available_from is None
+            and maintenance_end_after(machine, now) is None
+        ):
+            inoperable.append(machine_id)  # down with no known return: the calendar cannot know
             continue
         for i, (lo, hi) in enumerate(bounds):
             slots[i] += calendar.available_hours(lo, hi)
@@ -256,25 +294,60 @@ def compute_capacity(
                     report.scheduled_hours += occupied / 60.0
                 i += 1
 
-    missing_cycle = 0
+    max_cycle = (data_quality or DataQualityConfig()).max_cycle_minutes_per_unit
+    excluded = frozenset(exclude_order_ids or ())
     resolver = ResourceResolver(snapshot)
     for order in snapshot.open_orders():
         for op in snapshot.pending_operations_for_order(order.order_id):
             if op.operation_id in placed_ops:
                 continue
-            estimate = estimate_operation_minutes(op, order)
-            if estimate is None:
-                missing_cycle += 1
+            if order.order_id in excluded:
+                report.excluded_operations += 1
+                continue
+            cycle = operation_cycle_minutes(op, order)
+            if cycle is None:
+                report.missing_cycle_operations += 1
+                continue
+            if cycle_is_implausible(cycle, max_cycle):
+                report.implausible_cycle_operations += 1
+                continue
+            estimate = estimate_operation_minutes(op, order, max_cycle_minutes_per_unit=max_cycle)
+            if estimate is None:  # pragma: no cover - both checks above already passed
                 continue
             resource = resolver.resolve(op, order, dimension)
             if resource is None:
                 report.unallocated_hours += estimate / 60.0
                 report.unallocated_operations += 1
                 continue
-            estimated[resource][0] += estimate / 60.0
+            period_index = 0  # overdue and undated work is required now
+            if order.due_date is not None:
+                due = ensure_utc(order.due_date)
+                if due >= horizon_end:
+                    report.beyond_horizon_hours += estimate / 60.0
+                    report.beyond_horizon_operations += 1
+                    continue
+                period_index = max(0, bisect_right(starts, due) - 1)
+            estimated[resource][period_index] += estimate / 60.0
             report.estimated_hours += estimate / 60.0
-    if missing_cycle:
-        report.notes.append(f"{missing_cycle} pending operation(s) without cycle time carry no demand")
+    if report.missing_cycle_operations:
+        report.notes.append(
+            f"{report.missing_cycle_operations} pending operation(s) without cycle time carry no demand"
+        )
+    if report.implausible_cycle_operations:
+        report.notes.append(
+            f"{report.implausible_cycle_operations} pending operation(s) with an implausible cycle time "
+            f"(> {max_cycle:g} min/unit) carry no demand"
+        )
+    if report.excluded_operations:
+        report.notes.append(
+            f"{report.excluded_operations} pending operation(s) of orders withheld by data quality "
+            "carry no demand"
+        )
+    if report.beyond_horizon_operations:
+        report.notes.append(
+            f"{report.beyond_horizon_operations} pending operation(s) ({report.beyond_horizon_hours:.1f} h) "
+            "are due after the horizon and not required inside it"
+        )
     if report.unallocated_operations:
         report.notes.append(
             f"{report.unallocated_operations} pending operation(s) ({report.unallocated_hours:.1f} h) "
@@ -313,9 +386,22 @@ def capacity_rows(
     horizon_days: float,
     dimension: Dimension = "machine_group",
     period: Period = "week",
+    *,
+    data_quality: DataQualityConfig | None = None,
+    exclude_order_ids: Collection[str] | None = None,
 ) -> list[CapacityRow]:
     """Contract-shaped variant (DESIGN_CONTRACT §6.6): only the ordered rows."""
-    return compute_capacity(snapshot, schedule, calendars, now, horizon_days, dimension, period).rows
+    return compute_capacity(
+        snapshot,
+        schedule,
+        calendars,
+        now,
+        horizon_days,
+        dimension,
+        period,
+        data_quality=data_quality,
+        exclude_order_ids=exclude_order_ids,
+    ).rows
 
 
 __all__ = [

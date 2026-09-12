@@ -303,17 +303,22 @@ blocks; only positive evidence does.
 | 2. Calculate priority score | Done beforehand by the priority engine; the scheduler only reads `score`, `rank`, `forced_next`. |
 | 3. Sort eligible orders | Global processing order by bucket: (0) orders with an operation IN_PROGRESS on a machine, (1) order-locked orders in lock creation order, (2) `forced_next`, (3) everything else by `(-score, due_date, order_id)`. SEQUENCE locks then re-assign their orders to the positions they occupy, in the locked order (`apply_sequence_locks`). |
 | 4. Assign orders to compatible machines | Per pending operation, in sequence: `eligibility` (cached per operation) → usable machines (initialised state, not frozen) → `rank_machines` (§8) → recommended machine, unless a forced/slot-locked machine is required. |
-| 5. Optimise machine sequence | The machine sequence *is* the processing order: machines are never back-filled; each placement goes after the machine's last job (`state.next_free`). Opportunistic batching (§7) may pull a same-setup order forward right after a placement. |
+| 5. Optimise machine sequence | Machines are **back-filled** (`timeline.py`, `machine_assignment.find_slot`): every machine keeps its placed entries as a time-ordered list of busy slots plus the idle gaps between them (gaps with calendar working time only). A placement takes the *earliest gap* the job fits into — candidate start `max(release, gap start)`, setup derived from the slot **before** the gap (its family / material / mounted tooling), calendar and reserved lock windows respected, the job ending by the next slot's setup start — and falls back to the tail after the machine's last job (`state.next_free`). Existing entries never move; a gap is used only when the following slot's recorded setup stays sufficient (**successor rule**: the successor recorded a full changeover, or the new job keeps the family / material relationship the successor relied on; a frozen entry without a recorded basis requires an unchanged family *and* material). A late-released high-priority job therefore no longer idles a downstream machine for every lower-priority job behind it. Opportunistic batching (§7) may pull a same-setup order forward right after a placement; a pulled job is appended at the tail (behind the setup it shares), never back-filled. |
 | 6. Respect operation dependencies | Release of an operation = `max(order release, dependency completions, cross-order prerequisite end, previous operation end)`. Dependencies (`depends_on_order_ids`) are processed *before* the dependent (`ListScheduler.process` recurses), so a high-priority dependent lifts its upstream order; an unschedulable dependency makes the dependent `blocked`. |
 | 7. Calculate projected completion | `place_on_calendar(calendar, earliest, setup, run, reserved)`: `setup_start = next_working_time(earliest)`, `start = add_work_minutes(setup_start, setup)`, `end = add_work_minutes(start, run)`, retried past any reserved lock window. `finalise_entries` sets `expected_completion` = end of the order's last entry. |
 | 8. Detect lateness | `expected_lateness_hours = end − due_date` (signed); `metrics.late_orders`, `orders_at_risk`, `revenue_at_risk` (§9). |
 | 9. Recalculate priority | Not done inside the scheduler; a replan re-runs the priority engine on a fresh snapshot (§11, `docs/ARCHITECTURE.md` §3.2). |
 | 10. Produce schedule | `ScheduleResult` with entries, unscheduled items, recommendations, warnings (excluded machines, dropped frozen entries, beyond-horizon entries, batched count), metrics and quality. |
 
-Machine states (`state.init_machine_states`): one `MachineState` per machine with a calendar;
-`next_free = max(now, available_from)`; inoperable machines start at the end of their known
-downtime and are **excluded** (warning) when no return is known; planner-frozen machines keep their
-old entries but take no new work. Failures never abort a run: an operation without machine / cycle
+Machine states (`state.init_machine_states`): one `MachineState` per machine with a calendar,
+paired with a `MachineTimeline`; `next_free = max(now, available_from)` and, once work is placed,
+the end of the machine's *last* job (the tail); the family / material / tooling / customer /
+part-family fields describe the state after that job, a back-filled entry only adds load and
+mounted tooling (`apply_entry_to_state(..., tail=False)`). Inoperable machines start at the end
+of their known downtime and are **excluded** (warning) when no return is known; planner-frozen
+machines keep their old entries but take no new work. Frozen and locked entries enter the
+timeline as ordinary slots, so later placements back-fill around them without moving them.
+Failures never abort a run: an operation without machine / cycle
 time / calendar becomes an `UnscheduledItem`, the rest of that order is skipped (already placed
 entries stay, the order counts as unscheduled, `expected_completion` is cleared).
 
@@ -382,14 +387,27 @@ bound. Tests: `test_scheduling_batching.py`, `test_batching_pulls_same_material_
 For every eligible machine, with the same code the placement uses:
 
 ```
-earliest    = max(now, release, state.next_free, machine.available_from)
-setup       = compute_setup(op, machine, state, config, ctx)          # family/material/tooling aware
+floor       = max(now, release, machine.available_from)
 run         = op.run_minutes_on(machine)                               # None → rejected "cycle time unknown"
-setup_start, end = place_span(calendar, earliest, setup + run, reserved windows)
-soft_cost   = Σ constraint_engine.soft_penalties(op, machine, ctx).cost
+slot        = find_slot(op, machine, state, calendar, floor, run, reserved, timeline)
+              # earliest gap of the machine's timeline the job fits into, else the tail:
+              #   for gap in gaps ending after floor (time order):
+              #     skip unless gap.work_minutes >= run and successor rule holds        (O(1))
+              #     setup = compute_setup(op, machine, state before the gap)
+              #     fits  = setup + run <= gap.work_minutes (from max(floor, gap start); calendar walk
+              #             only when the job cannot start at the gap start or windows are reserved)
+              #   tail: candidate = max(floor, state.next_free), setup from the tail state
+setup_start, end = place_span(calendar, candidate, setup + run, reserved windows)   # once, for the slot taken
+soft_cost   = Σ constraint_engine.soft_penalties(op, machine, ctx).cost   # ctx.machine_state = state the job follows
 total_cost  = minutes(now → end) + soft_cost
 sort key    = (total_cost, machine.preferred_rank, machine_id)
 ```
+
+Within one machine the earliest feasible slot wins (a gap always ends before the tail placement
+would); across machines the ranking compares total cost as before. Batching pulls
+(`tail_only=True`) rank the tail only. The `SlotPlacement` of every feasible machine is handed
+back to the placement loop, so the entry is built from exactly the instants and setup the ranking
+used ("back-filled into idle time ahead of later-placed work" is appended to the placement reason).
 
 Feasible candidates get `rank` 1..n and `recommended = (rank == 1)`; machines with no state
 (excluded from the run), no calendar or unknown cycle time are appended as rejected candidates
@@ -619,9 +637,14 @@ bottlenecks CNC (92%) → AM (95%)"). `money.format_money` renders INR in lakh/c
 ## 13. Complexity and measured performance
 
 Design bounds (`docs/ARCHITECTURE.md` §6): readiness index built once; eligibility cached per
-operation; per-machine state advanced in O(1); no back-filling and no pairwise order loops;
-batching lookahead bounded by 25 slots; calendars cache working segments per UTC day. Overall
-V1 cost is O(operations × eligible machines × calendar look-ups).
+operation; per-machine tail state advanced in O(1) and the timeline updated by a `bisect` +
+list insert (≤ 2 calendar walks per entry for the gaps it creates); no pairwise order loops;
+batching lookahead bounded by 25 slots; calendars cache working segments per UTC day. Back-filling
+adds, per (operation, eligible machine), a scan over the machine's *open gaps* after the release
+instant with O(1) rejection tests (working minutes, successor rule) and a setup computation only
+for gaps that pass; the calendar is walked once for the slot taken. On the perf snapshot below
+the scan visits ~8 gaps per probe and costs about +6 % (8.5 s → 9.0 s on the same container).
+Overall V1 cost is O(operations × eligible machines × (open gaps + calendar look-ups)).
 
 Measured on the perf test snapshot (`tests/engines/test_scheduling_perf.py::_big_snapshot`: 5,000
 orders, 12,000 operations over 5 routings, 45 machines in 4 groups, 800 customers, one
@@ -649,8 +672,10 @@ Limitations of the code as it stands:
 * Objectives (`ObjectiveWeights`) and overtime rules (`OvertimeRules`) are configuration only;
   no engine reads them. The quality score uses `quality_weights`; CP-SAT minimises weighted
   tardiness plus setup.
-* No back-filling: a short job never fills a gap before an earlier-placed long job on the same
-  machine; sequencing quality comes from the priority order and the bounded batching lookahead.
+* Back-filling is greedy: a job takes the earliest gap it fits into on each machine and never
+  re-times existing entries (the successor rule skips gaps that would invalidate a recorded
+  setup). Sequencing quality still comes from the priority order and the bounded batching
+  lookahead; there is no local search over the machine sequence.
 * "Downstream impact" in machine ranking is the lowest planned load, not a chain analysis.
 * Operators, fixtures and energy pricing are not constraints (energy exists as a soft cost with an
   empty default map); operation sequence within an order is strictly serial; lot splitting and

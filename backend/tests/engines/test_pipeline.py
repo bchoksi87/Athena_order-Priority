@@ -14,11 +14,12 @@ import pytest
 
 from app.core.clock import FrozenClock
 from app.core.errors import NotFoundError
-from app.domain.config import SystemConfig
+from app.domain.config import DataQualityConfig, SystemConfig
 from app.domain.enums import AlertSeverity, AlertType, LockType, OperationStatus, OverrideType, ReadinessState
 from app.domain.models import Expedite, PriorityOverride, ScheduleLock, TimeWindow
 from app.domain.results import PriorityResult, ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
+from app.engines.analytics.capacity import compute_capacity
 from app.engines.constraints.readiness import SYNTHETIC_OPERATION_SUFFIX
 from app.engines.pipeline import (
     DATA_QUALITY_REASON_CODE,
@@ -438,6 +439,38 @@ def test_kpis_are_consistent_with_schedule_metrics(
         1 for r in result.priorities.values() if r.readiness is ReadinessState.WAITING_MATERIAL
     )
     assert kpis.capacity_utilization_pct == pytest.approx(result.capacity.utilization_pct)
+
+
+def test_capacity_counts_neither_withheld_orders_nor_implausible_cycles(
+    result: PipelineResult, snapshot: PlanningSnapshot
+) -> None:
+    capacity = result.capacity
+    assert capacity.excluded_operations > 0 or capacity.implausible_cycle_operations > 0
+    naive = compute_capacity(
+        snapshot,
+        result.schedule,
+        result.calendars,
+        snapshot.as_of,
+        CONFIG.scheduling.horizon_days,
+        "machine_group",
+        "week",
+        data_quality=DataQualityConfig(max_cycle_minutes_per_unit=1e12),
+    )
+    assert naive.total_required_hours > capacity.total_required_hours
+    assert naive.excluded_operations == 0 and naive.implausible_cycle_operations == 0
+    same = compute_capacity(
+        snapshot,
+        result.schedule,
+        result.calendars,
+        snapshot.as_of,
+        CONFIG.scheduling.horizon_days,
+        "machine_group",
+        "week",
+        data_quality=CONFIG.data_quality,
+        exclude_order_ids=result.dq_excluded_order_ids,
+    )
+    assert same.table() == capacity.table()
+    assert result.kpis.capacity_utilization_pct == pytest.approx(capacity.utilization_pct)
 
 
 def test_alerts_include_every_overdue_order(result: PipelineResult, snapshot: PlanningSnapshot) -> None:

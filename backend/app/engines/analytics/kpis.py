@@ -27,13 +27,13 @@ bottleneck panel and the alert list:
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta
 
 import structlog
 
 from app.core.clock import ensure_utc
-from app.domain.config import SchedulingConfig
+from app.domain.config import DataQualityConfig, SchedulingConfig
 from app.domain.enums import ReadinessState
 from app.domain.results import ExecutiveKpis, PriorityResult, ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
@@ -102,8 +102,15 @@ def compute_executive_kpis(
     now: datetime,
     config: SchedulingConfig,
     calendars: Mapping[str, MachineCalendar],
+    *,
+    data_quality: DataQualityConfig | None = None,
+    exclude_order_ids: Collection[str] | None = None,
 ) -> ExecutiveKpis:
-    """All Phase 8 executive KPIs (see module docstring for each definition)."""
+    """All Phase 8 executive KPIs (see module docstring for each definition).
+
+    ``data_quality`` / ``exclude_order_ids`` feed the capacity utilisation
+    (see :func:`~app.engines.analytics.capacity.compute_capacity`).
+    """
     now = ensure_utc(now)
     tz = plant_timezone(snapshot)
     today = local_date(now, tz)
@@ -139,7 +146,15 @@ def compute_executive_kpis(
     scheduled = sum(1 for i in risk.items if i.scheduled)
     unscheduled = len(open_orders) - scheduled
     capacity = compute_capacity(
-        snapshot, schedule, calendars, now, config.horizon_days, "machine_group", "week"
+        snapshot,
+        schedule,
+        calendars,
+        now,
+        config.horizon_days,
+        "machine_group",
+        "week",
+        data_quality=data_quality,
+        exclude_order_ids=exclude_order_ids,
     )
 
     kpis = ExecutiveKpis(

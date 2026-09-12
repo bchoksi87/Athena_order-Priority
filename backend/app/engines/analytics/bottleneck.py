@@ -34,14 +34,14 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import structlog
 
 from app.core.clock import ensure_utc
-from app.domain.config import AlertConfig, SchedulingConfig
+from app.domain.config import AlertConfig, DataQualityConfig, SchedulingConfig
 from app.domain.enums import ReadinessState, RiskLevel
 from app.domain.models import Material, Order, Tooling
 from app.domain.results import Bottleneck, PriorityResult, ScheduleResult
@@ -278,6 +278,7 @@ def _resource_bottlenecks(
     alert_config: AlertConfig,
     now: datetime,
     min_orders_blocked: int,
+    max_cycle_minutes_per_unit: float | None = None,
 ) -> list[Bottleneck]:
     blocked_by: dict[tuple[str, str], list[Order]] = defaultdict(list)
     users: dict[tuple[str, str], int] = defaultdict(int)
@@ -309,7 +310,16 @@ def _resource_bottlenecks(
     for (kind, resource_id), orders in sorted(blocked_by.items()):
         if len(orders) < max(1, min_orders_blocked):
             continue
-        held = sum((estimate_order_remaining_minutes(o, snapshot) or 0.0) for o in orders) / 60.0
+        held = (
+            sum(
+                estimate_order_remaining_minutes(
+                    o, snapshot, max_cycle_minutes_per_unit=max_cycle_minutes_per_unit
+                )
+                or 0.0
+                for o in orders
+            )
+            / 60.0
+        )
         revenue = sum(by_order[o.order_id].revenue for o in orders if o.order_id in money_ids)
         margin = sum(by_order[o.order_id].margin for o in orders if o.order_id in money_ids)
         severity = (
@@ -365,18 +375,38 @@ def find_bottlenecks(
     *,
     horizon_days: float | None = None,
     min_orders_blocked: int = 1,
+    data_quality: DataQualityConfig | None = None,
+    exclude_order_ids: Collection[str] | None = None,
 ) -> list[Bottleneck]:
-    """Capacity, material and tooling bottlenecks sorted by severity then shortfall (see module docstring)."""
+    """Capacity, material and tooling bottlenecks sorted by severity then shortfall (see module docstring).
+
+    ``data_quality`` / ``exclude_order_ids`` are forwarded to
+    :func:`~app.engines.analytics.capacity.compute_capacity` so implausible
+    cycle times and data-quality-withheld orders never create phantom demand.
+    """
     now = ensure_utc(now)
     horizon = horizon_days if horizon_days is not None else config.horizon_days
+    dq = data_quality or DataQualityConfig()
     risk = orders_at_risk(priorities, schedule, snapshot, config, now)
     reports: dict[Dimension, CapacityReport] = {
-        dim: compute_capacity(snapshot, schedule, calendars, now, horizon, dim, "week")
+        dim: compute_capacity(
+            snapshot,
+            schedule,
+            calendars,
+            now,
+            horizon,
+            dim,
+            "week",
+            data_quality=dq,
+            exclude_order_ids=exclude_order_ids,
+        )
         for dim in CAPACITY_DIMENSIONS
     }
     demand = resource_demand(snapshot, risk)
     found = _capacity_bottlenecks(snapshot, calendars, reports, demand, alert_config, now)
-    found += _resource_bottlenecks(snapshot, priorities, risk, alert_config, now, min_orders_blocked)
+    found += _resource_bottlenecks(
+        snapshot, priorities, risk, alert_config, now, min_orders_blocked, dq.max_cycle_minutes_per_unit
+    )
     found.sort(key=bottleneck_sort_key)
     log.debug(
         "analytics.bottlenecks",

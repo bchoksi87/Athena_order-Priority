@@ -9,9 +9,14 @@
   through its ``previous_entries`` mechanism; here we *verify*: a frozen
   entry that is missing, moved or re-assigned in the proposal counts as a
   violation and — unless ``restore=False`` — the previous placement is put
-  back (marked ``locked``) and a warning is added to the result. Entries whose
-  operation is finished, or whose order is closed in ``snapshot`` (when given),
-  are not frozen: there is nothing left to protect.
+  back (marked ``locked``) and a warning is added to the result. When
+  ``snapshot`` is given, entries whose operation is finished or whose order is
+  closed are ignored (nothing left to protect), and entries whose machine can
+  no longer run them (unknown, or DOWN / OFFLINE / MAINTENANCE with no
+  scheduled return — the rule the scheduler applies when it excludes a
+  machine) are compared like any other entry but never *frozen*: a hard
+  event such as a machine failure must not count as a violation of the plan
+  it just invalidated.
 * **moves** — entries present in both schedules that changed machine or start
   by more than ``tolerance_minutes``; ``added`` / ``removed`` cover the rest.
   ``max_moves_per_replan`` is reported (``max_moves_exceeded``), the decision
@@ -39,6 +44,7 @@ from app.core.clock import ensure_utc
 from app.domain.config import StabilityRules
 from app.domain.results import ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
+from app.engines.constraints.hard import maintenance_end_after
 
 log = structlog.get_logger(__name__)
 
@@ -138,6 +144,16 @@ def _still_relevant(entry: ScheduleEntry, snapshot: PlanningSnapshot | None) -> 
     return op is None or not op.is_done
 
 
+def _machine_can_run(entry: ScheduleEntry, snapshot: PlanningSnapshot | None, now: datetime) -> bool:
+    """False when the entry's machine is unknown or inoperable with no scheduled return."""
+    if snapshot is None:
+        return True
+    machine = snapshot.machines.get(entry.machine_id)
+    if machine is None:
+        return False
+    return machine.status.is_operable or maintenance_end_after(machine, now) is not None
+
+
 def _renumber(entries: list[ScheduleEntry]) -> list[ScheduleEntry]:
     by_machine: dict[str, list[ScheduleEntry]] = defaultdict(list)
     for entry in entries:
@@ -203,7 +219,7 @@ def apply_stability(
     for op_id in sorted(previous_by_op):
         old = previous_by_op[op_id]
         new = proposed_by_op.get(op_id)
-        frozen = ensure_utc(old.setup_start) < window_end
+        frozen = ensure_utc(old.setup_start) < window_end and _machine_can_run(old, snapshot, now)
         if frozen:
             report.frozen_entries += 1
         if new is None:

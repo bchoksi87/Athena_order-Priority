@@ -25,9 +25,11 @@ from app.domain.models import Machine, Operation, Order, ScheduleLock
 from app.domain.results import PriorityResult, ScheduleEntry, ScheduleResult
 from app.domain.snapshot import PlanningSnapshot
 from app.engines.calendar import MachineCalendar, build_calendars
-from app.engines.constraints import default_constraint_engine
+from app.engines.constraints import MachineState, default_constraint_engine
 from app.engines.scheduling.registry import SchedulerRegistry, default_registry
 from app.engines.scheduling.rule_based import RuleBasedScheduler
+from app.engines.scheduling.setup import compute_setup
+from app.engines.scheduling.state import apply_entry_to_state
 from tests.engines.factories import (
     NOW,
     at,
@@ -582,6 +584,135 @@ class TestFrozenWindow:
         )
         assert [e.order_id for e in result.entries] == ["D", "C", "B", "A"]
         assert not any(e.locked for e in result.entries)
+
+
+class TestBackFill:
+    """Gap filling: idle time before a late-released job is used, nothing existing moves."""
+
+    def test_lower_priority_ready_jobs_run_before_a_late_released_high_priority_job(self) -> None:
+        # HIGH needs 5.5 h of CNC first, so its deburring step is released at 13:30; the two
+        # deburring-only orders are ready now and must not wait behind it on the idle DEB-01.
+        high = _order("HIGH", steps=(CNC, DEB), ops=[{"cycle_minutes_per_unit": 30.0}, {}])
+        lows = [_order("LOW1", steps=(DEB,)), _order("LOW2", steps=(DEB,))]
+        snap = _snapshot(
+            [high, *lows],
+            machines=[
+                make_machine("CNC-01", calendar_id="CAL"),
+                make_machine("DEB-01", DEB, "DEB", calendar_id="CAL"),
+            ],
+        )
+        result = _run(snap, {"HIGH": 90, "LOW1": 50, "LOW2": 40})
+        deb = {e.order_id: e for e in result.entries_for_machine("DEB-01")}
+        assert deb["HIGH"].setup_start == at(hours=5.5) and deb["HIGH"].end == at(hours=7)
+        assert deb["LOW1"].setup_start == NOW and deb["LOW1"].end == at(hours=1.5)
+        assert deb["LOW2"].setup_start == at(hours=1.5) and deb["LOW2"].end == at(hours=3)
+        assert [e.order_id for e in result.entries_for_machine("DEB-01")] == ["LOW1", "LOW2", "HIGH"]
+        assert [e.sequence_on_machine for e in result.entries_for_machine("DEB-01")] == [1, 2, 3]
+        assert "back-filled into idle time" in deb["LOW1"].placement_reason
+        assert "back-filled" not in deb["HIGH"].placement_reason
+        assert result.metrics.on_time_pct == 100.0
+        _assert_no_overlap(result)
+        _assert_calendar_respected(result, build_calendars(snap))
+
+    def test_gap_is_skipped_when_it_would_break_a_same_family_successor(self) -> None:
+        # A and B (both family F1) reach DEB-01 late: A at 14:00-15:00, B (released Tuesday 08:30)
+        # right behind it with no setup because it follows A. The 90 working minutes between them
+        # would hold C (60 min), but C's family F2 would invalidate B's zero setup, so C goes after B.
+        a = _order(
+            "A",
+            steps=(CNC, DEB),
+            ops=[{"cycle_minutes_per_unit": 30.0}, {"setup_family": "F1", "cycle_minutes_per_unit": 3.0}],
+        )
+        b = _order("B", steps=(CNC, DEB), ops=[{"cycle_minutes_per_unit": 48.0}, {"setup_family": "F1"}])
+        c = _order("C", steps=(DEB,), ops=[{"setup_family": "F2", "cycle_minutes_per_unit": 3.0}])
+        machines = [
+            make_machine("CNC-01", calendar_id="CAL"),
+            make_machine("CNC-02", calendar_id="CAL"),
+            make_machine("DEB-01", DEB, "DEB", calendar_id="CAL", available_from=at(hours=6)),
+        ]
+        snap = _snapshot([a, b, c], machines=machines)
+        result = _run(snap, {"A": 90, "B": 85, "C": 80})
+        deb = {e.order_id: e for e in result.entries_for_machine("DEB-01")}
+        assert (deb["A"].setup_start, deb["A"].end) == (at(hours=6), at(hours=7))
+        assert deb["B"].setup_start == at(days=1, hours=0.5) and deb["B"].setup_minutes == 0.0
+        assert deb["C"].setup_start == deb["B"].end and "back-filled" not in deb["C"].placement_reason
+        _assert_no_overlap(result)
+        # the same job in family F1 keeps B's assumption valid and is back-filled into the gap
+        snap.operations["C-op1"].setup_family = "F1"
+        result = _run(snap, {"A": 90, "B": 85, "C": 80})
+        deb = {e.order_id: e for e in result.entries_for_machine("DEB-01")}
+        assert (deb["C"].setup_start, deb["C"].end) == (at(hours=7), at(hours=7.5))  # same family: no setup
+        assert deb["B"].setup_start == at(days=1, hours=0.5) and deb["B"].setup_minutes == 0.0
+        assert "back-filled" in deb["C"].placement_reason
+        _assert_no_overlap(result)
+
+    def test_invariants_with_locks_and_frozen_window_on_a_mixed_plant(self) -> None:
+        cnc = [make_machine(f"CNC-0{i}", calendar_id="CAL") for i in (1, 2)]
+        deb = [make_machine(f"DEB-0{i}", DEB, "DEB", calendar_id="CAL") for i in (1, 2)]
+        ins = [make_machine("INS-01", ProcessType.INSPECTION, "INS", calendar_id="CAL")]
+        orders = []
+        for i in range(24):
+            steps = (CNC, DEB, ProcessType.INSPECTION) if i % 3 else (CNC, ProcessType.INSPECTION)
+            ops = [
+                {
+                    "setup_minutes": 15.0 + 5 * (i % 4),
+                    "cycle_minutes_per_unit": [3.0, 9.0, 27.0, 6.0][i % 4],
+                    "setup_family": f"F{i % 3}",
+                    "material_id": f"M{i % 2}",
+                }
+                for _ in steps
+            ]
+            orders.append(_order(f"O{i:02d}", steps=steps, ops=ops, part_family=f"PF{i % 5}"))
+        slot = ScheduleLock(
+            "TS",
+            LockType.TIME_SLOT,
+            "planner",
+            at(hours=-1),
+            "trial",
+            machine_id="DEB-01",
+            window=window(at(hours=2), 2),
+        )
+        snap = _snapshot(orders, machines=[*cnc, *deb, *ins], locks=[slot])
+        scores = {f"O{i:02d}": float((i * 37) % 100) for i in range(24)}
+        calendars = build_calendars(snap)
+        config = SchedulingConfig(lock_window_minutes=180.0)
+        first = _run(snap, scores, config)
+        result = _run(snap, scores, config, previous=first.entries)
+        assert _run(snap, scores, config, previous=first.entries).entries == result.entries  # deterministic
+        assert len(result.entries) == len(snap.operations) and not result.unscheduled
+        assert any("back-filled" in e.placement_reason for e in result.entries)
+        _assert_no_overlap(result)
+        _assert_calendar_respected(result, calendars)
+        for e in result.entries_for_machine("DEB-01"):  # reserved window honoured
+            assert not (e.setup_start < at(hours=4) and at(hours=2) < e.end), e
+        frozen = [e for e in first.entries if e.setup_start < at(hours=3)]
+        assert frozen
+        by_op = {e.operation_id: e for e in result.entries}
+        for old in frozen:  # frozen-window entries reproduced verbatim and locked
+            new = by_op[old.operation_id]
+            assert new.locked and (new.machine_id, new.setup_start, new.end) == (
+                old.machine_id,
+                old.setup_start,
+                old.end,
+            )
+        for order_id in snap.orders:  # operation sequence within an order
+            chain = result.entries_for_order(order_id)
+            for a, b in zip(chain, chain[1:], strict=False):
+                assert b.setup_start >= a.end
+        # setup consistency: every entry's recorded setup covers the changeover from the job before it
+        for machine in snap.machines.values():
+            state = MachineState(
+                machine.machine_id,
+                NOW,
+                machine.current_setup_family,
+                machine.current_material_id,
+                set(machine.tooling_configuration),
+            )
+            for e in result.entries_for_machine(machine.machine_id):
+                op, order = snap.operations[e.operation_id], snap.orders[e.order_id]
+                needed = compute_setup(op, machine, state, config, order=order, snapshot=snap).minutes
+                assert needed <= e.setup_minutes + 1e-6, (e.entry_id, needed, e.setup_minutes)
+                apply_entry_to_state(state, e, op, order)
 
 
 class TestRegistry:

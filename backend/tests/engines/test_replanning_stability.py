@@ -7,7 +7,8 @@ from datetime import timedelta
 import pytest
 
 from app.domain.config import StabilityRules
-from app.domain.enums import OperationStatus, OrderStatus
+from app.domain.enums import MachineStatus, OperationStatus, OrderStatus
+from app.domain.models import TimeWindow
 from app.engines.replanning import apply_stability
 from tests.engines.factories import NOW, at, make_entry, make_plant_snapshot, make_quality_schedule
 
@@ -114,6 +115,32 @@ def test_finished_or_closed_work_is_not_frozen() -> None:
     assert report.frozen_entries == 0 and report.frozen_violations == 0 and report.removed_entries == 0
     _, without = apply_stability(previous, proposed, NOW, RULES)
     assert without.frozen_violations == 2
+
+
+def test_entries_on_a_failed_machine_are_not_frozen() -> None:
+    """A machine that went down (no return known) invalidates its frozen entries: no violation."""
+    snapshot = make_plant_snapshot(4)
+    snapshot.machines["CNC-01"].status = MachineStatus.DOWN
+    previous = make_quality_schedule(_previous(), quality_score=70.0)
+    proposed = make_quality_schedule(
+        [
+            make_entry("O0", "CNC-02", at(hours=1), run_minutes=60, sequence_on_machine=2),  # moved off
+            _previous()[1],
+            make_entry("O2", "CNC-02", at(hours=3), run_minutes=60, sequence_on_machine=3),
+            make_entry("O3", "CNC-02", at(hours=2), run_minutes=60),
+        ],
+        quality_score=72.0,
+    )
+    result, report = apply_stability(previous, proposed, NOW, RULES, snapshot=snapshot)
+    assert result is proposed and report.frozen_violations == 0 and report.restored_entries == 0
+    assert report.frozen_entries == 1  # only O1 on the healthy machine is protected
+    assert report.moved_entries == 2 and report.added_entries == 0 and report.removed_entries == 0
+    # a scheduled return keeps the machine (and its frozen entry) in play
+    snapshot.machines["CNC-01"].maintenance_windows = [TimeWindow(at(hours=-1), at(hours=1), "repair")]
+    _, report = apply_stability(previous, proposed, NOW, RULES, snapshot=snapshot)
+    assert report.frozen_entries == 2 and report.frozen_violations == 1
+    _, without = apply_stability(previous, proposed, NOW, RULES)
+    assert without.frozen_violations == 1
 
 
 def test_window_size_and_max_moves() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.domain.config import AlertConfig, SchedulingConfig
+from app.domain.config import AlertConfig, DataQualityConfig, SchedulingConfig
 from app.domain.enums import OperationStatus, ReadinessState, RiskLevel
 from app.domain.results import Bottleneck
 from app.engines.analytics.bottleneck import bottleneck_sort_key, capacity_severity, find_bottlenecks
@@ -107,6 +107,48 @@ def test_no_bottleneck_when_lightly_loaded() -> None:
     plant = _plant([make_order_with_ops("A")])
     assert (
         find_bottlenecks(plant, make_priorities({"A": 50}), None, build_calendars(plant), NOW, CFG, ALERTS)
+        == []
+    )
+
+
+def test_implausible_cycle_time_creates_no_phantom_bottleneck() -> None:
+    # one unit error (5,000 min/unit) would otherwise book 833 h against a 40 h week
+    plant = _plant(
+        [
+            make_order_with_ops("OK"),
+            make_order_with_ops("BROKEN", op_overrides=[{"cycle_minutes_per_unit": 5_000.0}]),
+        ]
+    )
+    priorities = make_priorities({"OK": 50, "BROKEN": 50})
+    found = find_bottlenecks(plant, priorities, None, build_calendars(plant), NOW, CFG, ALERTS)
+    assert found == []
+    counted = find_bottlenecks(
+        plant,
+        priorities,
+        None,
+        build_calendars(plant),
+        NOW,
+        CFG,
+        ALERTS,
+        data_quality=DataQualityConfig(max_cycle_minutes_per_unit=10_000.0),
+    )
+    assert counted and counted[0].severity is RiskLevel.CRITICAL and counted[0].utilization_pct > 2_000
+    # an order withheld by data quality is not demand either, however large it is
+    heavy = _plant([make_order_with_ops("HEAVY", op_overrides=[{"cycle_minutes_per_unit": 600.0}])])
+    assert find_bottlenecks(
+        heavy, make_priorities({"HEAVY": 50}), None, build_calendars(heavy), NOW, CFG, ALERTS
+    )
+    assert (
+        find_bottlenecks(
+            heavy,
+            make_priorities({"HEAVY": 50}),
+            None,
+            build_calendars(heavy),
+            NOW,
+            CFG,
+            ALERTS,
+            exclude_order_ids=["HEAVY"],
+        )
         == []
     )
 

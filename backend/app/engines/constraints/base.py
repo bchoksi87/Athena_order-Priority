@@ -14,7 +14,17 @@ from app.domain.snapshot import PlanningSnapshot
 
 @dataclass(slots=True)
 class MachineState:
-    """Mutable, scheduler-owned view of a machine while a schedule is built."""
+    """Mutable, scheduler-owned view of a machine while a schedule is built.
+
+    This is the *tail* view: ``next_free`` is the end of the machine's last
+    placed job, and the setup family / material / mounted tooling / last
+    customer / last part family describe the state after that job. The
+    rule-based scheduler back-fills earlier idle gaps through a separate
+    ``MachineTimeline`` (``app.engines.scheduling.timeline``); a transient
+    ``MachineState`` built from the slot before a gap represents the state a
+    back-filled job follows. ``scheduled_minutes`` is the machine's total
+    planned load, wherever the entries sit.
+    """
 
     machine_id: str
     next_free: datetime

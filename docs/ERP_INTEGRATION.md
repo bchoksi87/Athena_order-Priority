@@ -48,7 +48,7 @@ these are additive and documented here as part of the protocol.
 
 | Mode | Trigger | Behaviour | When to use |
 |---|---|---|---|
-| **Full** | `POST /sync/run {"mode":"full"}`, first run, nightly job | `since=None`; every entity fetched; upsert all; records absent from the ERP but present locally are marked inactive/closed (never deleted); reconciliation compares totals | Initial load, recovery after failed incrementals, ERPs without change tracking |
+| **Full** | `POST /sync/run {"mode":"full"}`, first run, nightly job | `since=None`; every entity fetched; upsert all; open orders absent from the ERP but present locally are closed, never deleted (`order_status = cancelled`, `attributes.missing_from_erp_since = <run started_at>`, counted as `orders_closed_missing` in the run summary and logged as `sync.orders_closed_missing`; `SyncOptions.prune_missing_orders` deletes instead; an empty order fetch closes nothing); reconciliation compares totals | Initial load, recovery after failed incrementals, ERPs without change tracking |
 | **Incremental** | Worker every `PPSE_SYNC_INTERVAL_MINUTES` (default 15) | `since = started_at of the most recent completed run` (using the start rather than the end of that run is the built-in overlap); only changed rows; upsert; reconciliation on fetched-vs-upserted counts | Normal operation; requires reliable `updated_at` in the ERP (U-06) |
 | **Webhook-ready** | ERP pushes an event (future, D-11) | The receiver converts the event payload into `RawRecord`s and feeds the same normalise → upsert path; then raises a replanning trigger | Near-real-time replanning without polling |
 

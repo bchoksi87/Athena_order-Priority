@@ -6,15 +6,16 @@
 2. take the priority order (human decisions — in-progress work, locks,
    forced-next — first),
 3. assign every pending operation to the machine with the earliest expected
-   completion after soft-constraint costs (spec Phase 35),
+   completion after soft-constraint costs (spec Phase 35), back-filling idle
+   gaps in each machine's timeline before appending after its last job,
 4. keep same-setup jobs together when the batching rules allow,
 5. respect operation sequence, order dependencies, calendars, downtime and
    locked windows,
 6. compute projected completion, lateness, metrics and the quality score.
 
 The heavy lifting lives in :mod:`run` (the loop), :mod:`candidates`,
-:mod:`state`, :mod:`locks`, :mod:`machine_assignment`, :mod:`batching`,
-:mod:`metrics` and :mod:`quality`; this module wires them together and
+:mod:`state`, :mod:`timeline`, :mod:`locks`, :mod:`machine_assignment`,
+:mod:`batching`, :mod:`metrics` and :mod:`quality`; this module wires them together and
 finalises the result (machine sequence numbers, last-operation flags,
 expected completion and lateness, warnings).
 
@@ -84,7 +85,9 @@ class RuleBasedScheduler:
         )
         locks = build_lock_index(snapshot, now)
         pool = init_machine_states(snapshot, calendars, now, locks)
-        frozen = reproduce_frozen_entries(previous_entries, snapshot, pool.states, config, now, locks)
+        frozen = reproduce_frozen_entries(
+            previous_entries, snapshot, pool.states, config, now, locks, timelines=pool.timelines
+        )
         assessments = constraints.assessment_map(snapshot, now)
         selection = select_candidates(snapshot, priorities, config, assessments, now, locks)
 
@@ -100,6 +103,7 @@ class RuleBasedScheduler:
             locks=locks,
             frozen_machines=set(locks.frozen_machines),
             batch_lookahead=self.batch_lookahead,
+            timelines=pool.timelines,
         )
         ctx.warnings.extend(pool.warnings)
         ctx.warnings.extend(frozen.warnings)

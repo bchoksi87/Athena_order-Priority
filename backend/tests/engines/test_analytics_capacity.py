@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.core.errors import ValidationError
+from app.domain.config import DataQualityConfig
 from app.domain.enums import MachineStatus, ProcessType
 from app.engines.analytics.capacity import capacity_rows, compute_capacity, period_bounds
 from app.engines.calendar import build_calendars
@@ -22,6 +23,7 @@ from tests.engines.factories import (
     make_order_with_ops,
     make_schedule,
     make_snapshot,
+    window,
 )
 
 CAL = make_calendar_spec("CAL")  # 08:00-16:00 UTC Mon-Fri; NOW is Monday 08:00 UTC
@@ -125,6 +127,75 @@ def test_unscheduled_demand_goes_to_first_period_and_unresolvable_is_unallocated
     schedule = make_schedule([make_entry("O1", "CNC-02", start=NOW, run_minutes=60)])
     with_schedule = compute_capacity(snap, schedule, calendars, NOW, 7, "machine", "week")
     assert with_schedule.rows_for("CNC-02")[0].required_hours == 1.0 and with_schedule.estimated_hours == 0.0
+
+
+def test_implausible_cycle_times_and_data_quality_excluded_orders_carry_no_demand() -> None:
+    normal, normal_ops = make_order_with_ops("OK")  # 30 + 6 x 10 = 90 min
+    broken, broken_ops = make_order_with_ops("BROKEN", op_overrides=[{"cycle_minutes_per_unit": 5_000.0}])
+    withheld, withheld_ops = make_order_with_ops("WITHHELD")
+    snap = _plant([normal, broken, withheld], [*normal_ops, *broken_ops, *withheld_ops])
+    calendars = build_calendars(snap)
+    report = compute_capacity(
+        snap, None, calendars, NOW, 7, "machine_group", "week", exclude_order_ids={"WITHHELD"}
+    )
+    totals = report.totals_for("CNC")
+    assert totals is not None and totals.required_hours == 1.5 and report.estimated_hours == 1.5
+    assert report.implausible_cycle_operations == 1 and report.excluded_operations == 1
+    assert report.missing_cycle_operations == 0 and report.unallocated_operations == 0
+    assert any("implausible cycle time (> 1440 min/unit)" in n for n in report.notes)
+    assert any("withheld by data quality" in n for n in report.notes)
+    # the limit is the data-quality configuration: raise it and the demand is counted again
+    lenient = compute_capacity(
+        snap,
+        None,
+        calendars,
+        NOW,
+        7,
+        "machine_group",
+        "week",
+        data_quality=DataQualityConfig(max_cycle_minutes_per_unit=10_000.0),
+    )
+    assert lenient.implausible_cycle_operations == 0
+    assert lenient.total_required_hours == pytest.approx(1.5 + 1.5 + (30 + 5_000 * 10) / 60)
+    # the default limit applies without any configuration (no phantom hours by accident)
+    default = compute_capacity(snap, None, calendars, NOW, 7, "machine_group", "week")
+    assert default.total_required_hours == 3.0 and default.implausible_cycle_operations == 1
+
+
+def test_unscheduled_demand_is_booked_in_the_period_of_its_due_date() -> None:
+    orders = [
+        make_order_with_ops("LATE", requested_delivery_date=at(hours=-30)),  # overdue: first period
+        make_order_with_ops("UNDATED", requested_delivery_date=None),  # unknown: first period
+        make_order_with_ops("SOON", requested_delivery_date=at(days=2, hours=1)),
+        make_order_with_ops("LATER", requested_delivery_date=at(days=5)),
+        make_order_with_ops("FAR", requested_delivery_date=at(days=9)),  # after the 7-day horizon
+    ]
+    snap = _plant([o for o, _ in orders], [op for _, ops in orders for op in ops])
+    report = compute_capacity(snap, None, build_calendars(snap), NOW, 7, "machine_group", "day")
+    assert [r.required_hours for r in report.rows_for("CNC")] == [3.0, 0.0, 1.5, 0.0, 0.0, 1.5, 0.0, 0.0]
+    assert report.estimated_hours == 6.0 and report.total_required_hours == 6.0
+    assert report.beyond_horizon_operations == 1 and report.beyond_horizon_hours == 1.5
+    assert any("due after the horizon" in n for n in report.notes)
+    weekly = compute_capacity(snap, None, build_calendars(snap), NOW, 7, "machine_group", "week")
+    assert [r.required_hours for r in weekly.rows_for("CNC")] == [6.0, 0.0]  # Mon 08:00-Mon 00:00, then 8 h
+
+
+def test_inoperable_machine_with_a_scheduled_return_keeps_its_remaining_capacity() -> None:
+    snap = _plant(
+        machines=[
+            make_machine("DOWN", calendar_id="CAL", status=MachineStatus.DOWN),
+            make_machine(  # back Tuesday 08:00 per its downtime window: Tue-Fri remain
+                "REPAIR",
+                calendar_id="CAL",
+                status=MachineStatus.DOWN,
+                unplanned_downtime=[window(at(hours=-1), 25, "breakdown")],
+            ),
+        ]
+    )
+    report = compute_capacity(snap, None, build_calendars(snap), NOW, 7, "machine", "week")
+    assert report.totals_for("DOWN").available_hours == 0.0  # type: ignore[union-attr]
+    assert report.totals_for("REPAIR").available_hours == 32.0  # type: ignore[union-attr]
+    assert report.notes == ["1 inoperable machine(s) without a return time contribute no available hours"]
 
 
 def test_department_and_process_dimensions() -> None:

@@ -367,15 +367,44 @@ class PlanningPipeline:
             if schedule.quality is None:  # a scheduler that did not finalise its result
                 schedule.metrics = compute_metrics(schedule, snapshot, calendars, scheduling)
             schedule.quality = compute_quality(schedule, scheduling)
+        # Analytics never count the work the data-quality gate withheld, nor cycle times
+        # above the plausibility limit (phantom hours), so capacity, bottlenecks and the
+        # KPI utilisation agree with what the scheduler was actually given.
+        dq_config = system_config.data_quality
         with _stage(timings, logger, "kpis"):
-            kpis = compute_executive_kpis(snapshot, priorities, schedule, now, scheduling, calendars)
+            kpis = compute_executive_kpis(
+                snapshot,
+                priorities,
+                schedule,
+                now,
+                scheduling,
+                calendars,
+                data_quality=dq_config,
+                exclude_order_ids=excluded,
+            )
         with _stage(timings, logger, "capacity"):
             capacity = compute_capacity(
-                snapshot, schedule, calendars, now, scheduling.horizon_days, "machine_group", "week"
+                snapshot,
+                schedule,
+                calendars,
+                now,
+                scheduling.horizon_days,
+                "machine_group",
+                "week",
+                data_quality=dq_config,
+                exclude_order_ids=excluded,
             )
         with _stage(timings, logger, "bottlenecks"):
             bottlenecks = find_bottlenecks(
-                snapshot, priorities, schedule, calendars, now, scheduling, system_config.alerts
+                snapshot,
+                priorities,
+                schedule,
+                calendars,
+                now,
+                scheduling,
+                system_config.alerts,
+                data_quality=dq_config,
+                exclude_order_ids=excluded,
             )
         with _stage(timings, logger, "alerts"):
             alerts = evaluate_alerts(

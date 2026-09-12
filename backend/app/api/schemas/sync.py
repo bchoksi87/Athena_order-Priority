@@ -69,6 +69,7 @@ class SyncRunResponse(BaseModel):
     reconciliation: ReconciliationResponse | None = None
     stored_totals: dict[str, int] = {}
     pruned_orders: int = 0
+    orders_closed_missing: int = 0
     watermark_source: str = "none"
     triggered_by: str | None = None
     error_message: str | None = None
@@ -123,6 +124,7 @@ class SyncRunResponse(BaseModel):
             reconciliation=ReconciliationResponse.model_validate(recon) if isinstance(recon, dict) else None,
             stored_totals=dict(data.get("stored_totals", {})),
             pruned_orders=int(data.get("pruned_orders", 0)),
+            orders_closed_missing=int(data.get("orders_closed_missing", 0)),
             watermark_source=str(data.get("watermark_source", "none")),
             triggered_by=triggered_by,
             error_message=data.get("error_message") or (fallback.error_message if fallback else None),

@@ -3,11 +3,15 @@
 For every eligible machine the ranking computes, with the *same* code paths the
 scheduler uses to place the job:
 
-* earliest start  = ``max(state.next_free, machine.available_from, now, release)``
-  moved to the machine calendar's next working instant and past any reserved
-  (locked) windows;
+* slot            = :func:`find_slot`: the earliest *gap* of the machine's
+  :class:`~app.engines.scheduling.timeline.MachineTimeline` the job fits into
+  (release, calendar working time, reserved lock windows and the timeline's
+  successor rule permitting), else the tail
+  ``max(state.next_free, machine.available_from, now, release)``; without a
+  timeline (or with ``tail_only``) only the tail is considered;
 * setup minutes   = :func:`~app.engines.scheduling.setup.compute_setup` (family /
-  material factors, unmounted tooling);
+  material factors, unmounted tooling) against the state the job actually
+  follows - the slot before the gap, or the tail state;
 * run minutes     = ``op.run_minutes_on(machine)`` (machine-specific cycle time
   and efficiency); ``None`` rejects the machine with "cycle time unknown";
 * expected end    = calendar arithmetic (non-working time skipped);
@@ -37,9 +41,12 @@ from app.engines.calendar.calendar import MachineCalendar
 from app.engines.constraints.base import ConstraintContext, MachineState
 from app.engines.constraints.engine import ConstraintEngine
 from app.engines.constraints.hard import required_tooling_ids
+from app.engines.constraints.soft import SetupEstimate
 from app.engines.scheduling.setup import compute_setup, describe_setup
+from app.engines.scheduling.timeline import MachineTimeline, successor_setup_holds
 
 CYCLE_TIME_UNKNOWN = "cycle time unknown"
+_WORK_EPS = 1e-6  # working-minute tolerance (matches the calendar's own epsilon)
 NO_CALENDAR = "no working calendar for this machine"
 NOT_INITIALISED = "machine excluded from this run (not operable and no known return)"
 
@@ -102,6 +109,67 @@ def place_span(
     return setup_start, end
 
 
+@dataclass(slots=True)
+class SlotPlacement:
+    """Where :func:`find_slot` put a job: instants, setup estimate and the state it follows."""
+
+    setup_start: datetime
+    end: datetime
+    estimate: SetupEstimate
+    state: MachineState  # predecessor view the setup was computed against
+    in_gap: bool  # False = appended after the machine's last job
+    gap_end: datetime | None = None  # start of the following slot when ``in_gap``
+
+
+def find_slot(
+    op: Operation,
+    order: Order | None,
+    machine: Machine,
+    state: MachineState,
+    calendar: MachineCalendar,
+    config: SchedulingConfig,
+    floor: datetime,
+    run_minutes: float,
+    reserved: Sequence[TimeWindow] = (),
+    *,
+    timeline: MachineTimeline | None = None,
+    snapshot: PlanningSnapshot | None = None,
+    tail_only: bool = False,
+) -> SlotPlacement:
+    """Earliest feasible slot for ``op`` on ``machine`` at or after ``floor``.
+
+    Gaps of ``timeline`` are probed in time order: the timeline's successor
+    rule is checked first (O(1)), then the setup against the slot before the
+    gap; the job fits when ``setup + run`` working minutes are available from
+    ``max(floor, gap start)`` to the gap end (the next slot's setup start) -
+    decided from the gap's recorded working minutes when the job can start at
+    the gap start and there are no reserved windows, else by a calendar walk.
+    The calendar is walked once for the slot finally taken. Without a fitting
+    gap the job goes after the tail.
+    """
+    floor = ensure_utc(floor)
+    if timeline is not None and not tail_only:
+        family = op.setup_family
+        material = op.material_id or (order.required_material_id if order is not None else None)
+        for gap in timeline.gaps_from(floor):
+            if gap.work_minutes < run_minutes or not successor_setup_holds(gap, family, material, config):
+                continue
+            candidate = max(floor, gap.start)
+            pred = timeline.state_before(gap, state)
+            estimate = compute_setup(op, machine, pred, config, order=order, snapshot=snapshot, at=candidate)
+            needed = estimate.minutes + run_minutes
+            if gap.work_minutes + _WORK_EPS < needed:
+                continue
+            setup_start, end = place_span(calendar, candidate, needed, reserved)
+            if (candidate > gap.start or reserved) and end > gap.end:
+                continue
+            return SlotPlacement(setup_start, end, estimate, pred, True, gap.end)
+    candidate = max(floor, state.next_free)
+    estimate = compute_setup(op, machine, state, config, order=order, snapshot=snapshot, at=candidate)
+    setup_start, end = place_span(calendar, candidate, estimate.minutes + run_minutes, reserved)
+    return SlotPlacement(setup_start, end, estimate, state, False)
+
+
 def _hours(delta: timedelta) -> float:
     return delta.total_seconds() / 3600.0
 
@@ -137,6 +205,9 @@ def rank_machines(
     release: datetime | None = None,
     reserved: Mapping[str, Sequence[TimeWindow]] | None = None,
     group_average_load: float | None = None,
+    timelines: Mapping[str, MachineTimeline] | None = None,
+    tail_only: bool = False,
+    slot_out: dict[str, SlotPlacement] | None = None,
 ) -> list[MachineCandidate]:
     """Rank ``eligible`` machines for ``op``; feasible ones first (rank 1..n), rejected ones after.
 
@@ -144,6 +215,10 @@ def rank_machines(
     ``expected_start``/``expected_end`` ``None`` and ``rank`` 0. ``release`` is the
     earliest instant the operation may start (previous operation, dependency,
     blocker resolution); ``reserved`` holds locked windows per machine.
+    ``timelines`` enables gap filling (:func:`find_slot`); ``tail_only`` forces
+    tail placement (batching pulls a job behind the machine's *current* setup);
+    ``slot_out`` receives the :class:`SlotPlacement` of every feasible machine so
+    the caller can place the winner without recomputing it.
     """
     now = ensure_utc(now)
     if snapshot is None:
@@ -165,20 +240,33 @@ def rank_machines(
             rejected.append(_rejected_candidate(machine.machine_id, CYCLE_TIME_UNKNOWN))
             continue
         run = max(0.0, run)
-        earliest = max(floor, state.next_free)
+        earliest = floor
         if machine.available_from is not None:
             earliest = max(earliest, ensure_utc(machine.available_from))
+        slot = find_slot(
+            op,
+            order,
+            machine,
+            state,
+            calendar,
+            config,
+            earliest,
+            run,
+            (reserved or {}).get(machine.machine_id, ()),
+            timeline=timelines.get(machine.machine_id) if timelines is not None else None,
+            snapshot=snapshot,
+            tail_only=tail_only,
+        )
+        if slot_out is not None:
+            slot_out[machine.machine_id] = slot
+        estimate, setup_start, end = slot.estimate, slot.setup_start, slot.end
         ctx = ConstraintContext(
             snapshot=snapshot,
-            at=earliest,
+            at=setup_start,
             config=config,
             order=order,
-            machine_state=state,
+            machine_state=slot.state,
             group_average_load_minutes=group_average_load,
-        )
-        estimate = compute_setup(op, machine, state, config, order=order, ctx=ctx)
-        setup_start, end = place_span(
-            calendar, earliest, estimate.minutes + run, (reserved or {}).get(machine.machine_id, ())
         )
         penalties = constraints.soft_penalties(op, machine, ctx)
         soft_cost = sum(p.cost for p in penalties)
@@ -201,7 +289,7 @@ def rank_machines(
                 setup_reason=describe_setup(estimate, config),
                 tooling_minutes=estimate.tooling_minutes,
                 same_family=estimate.basis == "same_family",
-                available_now=state.next_free <= now and setup_start <= now,
+                available_now=setup_start <= now,
                 load_minutes=state.scheduled_minutes,
                 penalties=[p.message for p in penalties],
             )
@@ -315,7 +403,9 @@ __all__ = [
     "NOT_INITIALISED",
     "NO_CALENDAR",
     "Placement",
+    "SlotPlacement",
     "build_recommendation",
+    "find_slot",
     "place_on_calendar",
     "place_span",
     "rank_machines",

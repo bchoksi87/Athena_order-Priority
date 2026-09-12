@@ -30,6 +30,16 @@ Reconciliation
 Full runs compare the connector counts with what the store holds afterwards
 (so stale local rows show up as drift); incremental runs can only compare the
 fetched slice with what was upserted from it.
+
+Missing orders (docs/ERP_INTEGRATION.md §2)
+--------------------------------------------
+After a successful full fetch, open orders stored locally but absent from the
+ERP's response are *closed*, never deleted: ``order_status = cancelled`` with
+``attributes["missing_from_erp_since"] = <run started_at>``, counted in the
+run summary as ``orders_closed_missing`` and logged (``sync.orders_closed_missing``)
+with the affected ids. ``SyncOptions.prune_missing_orders`` replaces this with
+a hard delete. A full fetch that returns *no* orders at all is treated as a
+connector problem and closes nothing (logged as a warning).
 """
 
 from __future__ import annotations
@@ -76,6 +86,7 @@ log = structlog.get_logger(__name__)
 SYNC_STATUS_RUNNING = "running"
 SYNC_STATUS_COMPLETED = "completed"
 SYNC_STATUS_FAILED = "failed"
+_MAX_LOGGED_ORDER_IDS = 50
 
 #: Connector methods in dependency order (masters before orders, progress last).
 _FETCHERS: tuple[tuple[str, str], ...] = (
@@ -159,6 +170,7 @@ class SyncRunSummary:
     reconciliation: ReconciliationReport | None = None
     stored_totals: dict[str, int] = field(default_factory=dict)
     pruned_orders: int = 0
+    orders_closed_missing: int = 0  # full mode: open orders absent from the ERP, now cancelled
     watermark_source: str = "none"
     error_message: str | None = None
 
@@ -193,6 +205,7 @@ class SyncRunSummary:
             "reconciliation": self.reconciliation.to_dict() if self.reconciliation else None,
             "stored_totals": dict(self.stored_totals),
             "pruned_orders": self.pruned_orders,
+            "orders_closed_missing": self.orders_closed_missing,
             "watermark_source": self.watermark_source,
             "error_message": self.error_message,
         }
@@ -497,10 +510,36 @@ class SyncService:
             batch.deferred_progress, summary, synced_at
         )
 
-        if mode is SyncMode.FULL and self._options.prune_missing_orders:
+        if mode is SyncMode.FULL:
+            self._reconcile_missing_orders(fetched_ids, summary, synced_at)
+        log.info("sync.upserted", **upserted)
+
+    def _reconcile_missing_orders(
+        self, fetched_ids: set[str], summary: SyncRunSummary, synced_at: datetime
+    ) -> None:
+        """Full mode: stored open orders the ERP no longer serves are closed (or pruned)."""
+        if self._options.prune_missing_orders:
             summary.pruned_orders = self._orders.delete_missing(fetched_ids)
             log.info("sync.pruned_orders", count=summary.pruned_orders)
-        log.info("sync.upserted", **upserted)
+            return
+        if not fetched_ids:
+            log.warning(
+                "sync.close_missing_skipped",
+                reason="the full fetch returned no orders; local open orders left untouched",
+            )
+            return
+        closed = list(self._orders.close_missing(fetched_ids, synced_at))
+        summary.orders_closed_missing = len(closed)
+        if closed:
+            log.info(
+                "sync.orders_closed_missing",
+                count=len(closed),
+                order_ids=closed[:_MAX_LOGGED_ORDER_IDS],
+                truncated=len(closed) > _MAX_LOGGED_ORDER_IDS,
+                missing_from_erp_since=synced_at.isoformat(),
+                new_status="cancelled",
+                reason="open order absent from the ERP full fetch",
+            )
 
     def _apply_deferred_progress(
         self, updates: list[ProductionStatusUpdate], summary: SyncRunSummary, synced_at: datetime

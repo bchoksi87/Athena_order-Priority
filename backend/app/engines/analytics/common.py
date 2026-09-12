@@ -167,17 +167,34 @@ def readiness_for(order: Order, priorities: Mapping[str, PriorityResult]) -> Rea
 # ------------------------------------------------------------ duration helpers
 
 
-def estimate_operation_minutes(op: Operation, order: Order) -> float | None:
+def operation_cycle_minutes(op: Operation, order: Order) -> float | None:
+    """Cycle minutes per unit from the operation, else the order-level estimate (``None``: unknown)."""
+    cycle = op.cycle_minutes_per_unit
+    return cycle if cycle is not None else order.estimated_cycle_minutes_per_unit
+
+
+def cycle_is_implausible(cycle: float | None, max_cycle_minutes_per_unit: float | None) -> bool:
+    """True when ``cycle`` exceeds ``DataQualityConfig.max_cycle_minutes_per_unit`` (a unit error).
+
+    Such a cycle is treated as *unknown* by the analytics: counting it would
+    book thousands of phantom hours against a resource (the Data Quality engine
+    blocks the order from scheduling for the same reason).
+    """
+    return cycle is not None and max_cycle_minutes_per_unit is not None and cycle > max_cycle_minutes_per_unit
+
+
+def estimate_operation_minutes(
+    op: Operation, order: Order, *, max_cycle_minutes_per_unit: float | None = None
+) -> float | None:
     """Setup + run minutes for the pending quantity of ``op`` from ERP data only.
 
     Uses the operation's own cycle/setup, then the order-level estimates. An
     in-progress operation needs no further setup. ``None`` when no cycle time
-    is known anywhere (the Data Quality engine reports that separately).
+    is known anywhere, or when the cycle exceeds ``max_cycle_minutes_per_unit``
+    (:func:`cycle_is_implausible`); the Data Quality engine reports both.
     """
-    cycle = op.cycle_minutes_per_unit
-    if cycle is None:
-        cycle = order.estimated_cycle_minutes_per_unit
-    if cycle is None:
+    cycle = operation_cycle_minutes(op, order)
+    if cycle is None or cycle_is_implausible(cycle, max_cycle_minutes_per_unit):
         return None
     setup = op.setup_minutes if op.setup_minutes is not None else order.estimated_setup_minutes
     setup_minutes = max(0.0, setup or 0.0)
@@ -186,19 +203,29 @@ def estimate_operation_minutes(op: Operation, order: Order) -> float | None:
     return setup_minutes + max(0.0, cycle) * op.pending_quantity
 
 
-def estimate_order_remaining_minutes(order: Order, snapshot: PlanningSnapshot) -> float | None:
-    """Remaining production minutes over pending operations, else the order-level estimate."""
+def estimate_order_remaining_minutes(
+    order: Order, snapshot: PlanningSnapshot, *, max_cycle_minutes_per_unit: float | None = None
+) -> float | None:
+    """Remaining production minutes over pending operations, else the order-level estimate.
+
+    Implausible cycle times (see :func:`cycle_is_implausible`) make the
+    estimate unknown at both levels instead of inflating it.
+    """
     pending = snapshot.pending_operations_for_order(order.order_id)
     total = 0.0
     if pending:
         for op in pending:
-            minutes = estimate_operation_minutes(op, order)
+            minutes = estimate_operation_minutes(
+                op, order, max_cycle_minutes_per_unit=max_cycle_minutes_per_unit
+            )
             if minutes is None:
                 total = -1.0
                 break
             total += minutes
         if total >= 0:
             return total
+    if cycle_is_implausible(order.estimated_cycle_minutes_per_unit, max_cycle_minutes_per_unit):
+        return None
     if order.estimated_total_production_minutes is not None:
         total = max(0.0, order.estimated_total_production_minutes)
         if order.quantity > 0:
@@ -360,6 +387,7 @@ __all__ = [
     "UNASSIGNED_DEPARTMENT",
     "Dimension",
     "ResourceResolver",
+    "cycle_is_implausible",
     "entries_by_order",
     "estimate_operation_minutes",
     "estimate_order_remaining_minutes",
@@ -371,6 +399,7 @@ __all__ = [
     "machine_department",
     "machine_key",
     "next_pending_operation",
+    "operation_cycle_minutes",
     "operation_material_id",
     "operation_tooling_ids",
     "order_margin",

@@ -173,6 +173,24 @@ class OrderRepository(Repository):
         self._flush()
         return order_from_row(row)
 
+    def close_missing(self, keep_order_ids: Iterable[str], at: datetime) -> Sequence[str]:
+        """Mark open orders absent from ``keep_order_ids`` as cancelled (full-sync reconciliation).
+
+        Nothing is deleted: the row keeps its operations and history, gets
+        ``order_status = cancelled`` and ``attributes["missing_from_erp_since"]``
+        = ``at`` so the reason is visible. Returns the affected ids (sorted).
+        """
+        keep = set(keep_order_ids)
+        stmt = select(OrderRow).where(OrderRow.order_status.not_in([s.value for s in CLOSED_ORDER_STATUSES]))
+        missing = [row for row in self._session.execute(stmt).scalars() if row.order_id not in keep]
+        for row in missing:
+            row.order_status = OrderStatus.CANCELLED.value
+            attributes = dict(row.attributes or {})
+            attributes["missing_from_erp_since"] = at.isoformat()
+            row.attributes = attributes
+        self._flush()
+        return sorted(row.order_id for row in missing)
+
     def delete_missing(self, keep_order_ids: Iterable[str]) -> int:
         """Delete orders not in ``keep_order_ids`` (full sync reconciliation)."""
         keep = set(keep_order_ids)

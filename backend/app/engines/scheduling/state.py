@@ -5,7 +5,14 @@ take work in this run: ``next_free = max(now, available_from)``, current setup
 family / material / mounted tooling from the ERP snapshot. Machines that are
 not operable start at the end of their known downtime; with no known return
 they are excluded (reported as warnings, and their operations end up
-unscheduled with a clear reason instead of being silently dropped).
+unscheduled with a clear reason instead of being silently dropped). Every
+state is paired with a :class:`~app.engines.scheduling.timeline.MachineTimeline`
+(``MachinePool.timelines``) that records the placed entries as busy slots and
+the idle gaps between them for back-filling; ``MachineState`` itself keeps the
+*tail* view: ``next_free`` is the end of the machine's last job and the
+family / material / tooling / customer / part-family fields describe the
+state after that job. ``apply_entry_to_state(..., tail=False)`` records a
+back-filled entry (load and mounted tooling only).
 
 ``reproduce_frozen_entries`` implements the "lock the next N hours" rule of
 spec Phase 10: entries of the previous schedule that start within
@@ -32,6 +39,7 @@ from app.engines.calendar.calendar import MachineCalendar
 from app.engines.constraints.base import MachineState
 from app.engines.constraints.hard import maintenance_end_after, required_tooling_ids
 from app.engines.scheduling.locks import LockIndex
+from app.engines.scheduling.timeline import MachineTimeline
 
 log = structlog.get_logger(__name__)
 
@@ -41,6 +49,7 @@ class MachinePool:
     """Machine states for one run plus why some machines were left out."""
 
     states: dict[str, MachineState] = field(default_factory=dict)
+    timelines: dict[str, MachineTimeline] = field(default_factory=dict)
     excluded: dict[str, str] = field(default_factory=dict)  # machine_id -> reason
     warnings: list[str] = field(default_factory=list)
 
@@ -77,6 +86,14 @@ def init_machine_states(
             current_material_id=machine.current_material_id,
             mounted_tooling=set(machine.tooling_configuration),
         )
+        pool.timelines[machine_id] = MachineTimeline(
+            machine_id,
+            calendars[machine_id],
+            next_free,
+            setup_family=machine.current_setup_family,
+            material_id=machine.current_material_id,
+            mounted_tooling=machine.tooling_configuration,
+        )
     for machine_id, reason in sorted(pool.excluded.items()):
         pool.warnings.append(f"Machine {machine_id} excluded: {reason}")
     if pool.excluded:
@@ -85,19 +102,31 @@ def init_machine_states(
 
 
 def apply_entry_to_state(
-    state: MachineState, entry: ScheduleEntry, op: Operation | None, order: Order | None
+    state: MachineState,
+    entry: ScheduleEntry,
+    op: Operation | None,
+    order: Order | None,
+    *,
+    tail: bool = True,
 ) -> None:
-    """Advance ``state`` as if ``entry`` had just been placed on the machine."""
+    """Advance ``state`` as if ``entry`` had just been placed on the machine.
+
+    With ``tail=False`` the entry was back-filled into a gap before the
+    machine's last job: only the load and the mounted tooling change, the
+    tail setup state (family, material, customer, part family) stays.
+    """
     state.next_free = max(state.next_free, entry.end)
     state.scheduled_minutes += entry.setup_minutes + entry.run_minutes
+    if op is not None:
+        state.mounted_tooling |= required_tooling_ids(op, order)
+    if not tail:
+        return
     family = op.setup_family if op is not None else entry.setup_family
     material = (op.material_id if op is not None else None) or entry.material_id
     if material is None and order is not None:
         material = order.required_material_id
     state.current_setup_family = family
     state.current_material_id = material
-    if op is not None:
-        state.mounted_tooling |= required_tooling_ids(op, order)
     state.last_customer_id = entry.customer_id or (order.customer_id if order is not None else None)
     state.last_part_family = order.part_family if order is not None else None
 
@@ -128,8 +157,13 @@ def reproduce_frozen_entries(
     config: SchedulingConfig,
     now: datetime,
     locks: LockIndex | None = None,
+    timelines: Mapping[str, MachineTimeline] | None = None,
 ) -> FrozenResult:
-    """Copy previous entries that fall inside the lock window (or belong to locks) as locked entries."""
+    """Copy previous entries that fall inside the lock window (or belong to locks) as locked entries.
+
+    Frozen entries also become busy slots of ``timelines`` (when given) so
+    later placements can back-fill around them without ever moving them.
+    """
     result = FrozenResult()
     if not previous_entries:
         return result
@@ -171,7 +205,12 @@ def reproduce_frozen_entries(
         frozen = replace(entry, locked=True)
         result.entries.append(frozen)
         seen.add(entry.operation_id)
-        apply_entry_to_state(state, frozen, snapshot.operations.get(entry.operation_id), order)
+        op = snapshot.operations.get(entry.operation_id)
+        timeline = timelines.get(entry.machine_id) if timelines is not None else None
+        is_tail = timeline is None or ensure_utc(frozen.setup_start) >= timeline.tail_end
+        apply_entry_to_state(state, frozen, op, order, tail=is_tail)
+        if timeline is not None:
+            timeline.add_entry(frozen, op, order)
     if result.entries:
         log.info(
             "scheduler.frozen_entries", count=len(result.entries), window_minutes=config.lock_window_minutes

@@ -596,6 +596,66 @@ def test_full_sync_reconciles_against_the_store_and_can_prune(
     assert SyncRunRepository(session).get(pruned.run_id).details["pruned_orders"] == 1
 
 
+def test_full_sync_closes_open_orders_missing_from_the_erp(
+    session: Session, dataset: SyntheticDataset, connector: MockERPConnector, clock: FrozenClock
+) -> None:
+    make_service(session, connector, clock).run("full")
+    orders = OrderRepository(session)
+    stale = Order(
+        "LEGACY-02",
+        dataset.customers[0].customer_id,
+        "P-OLD",
+        quantity=2,
+        order_status=OrderStatus.RELEASED,
+        attributes={"source": "test"},
+    )
+    orders.upsert(
+        [stale], [Operation("LEGACY-02-10", "LEGACY-02", 10, ProcessType.OTHER)], synced_at=clock.now()
+    )
+    assert orders.get("LEGACY-02").is_open
+    open_before = len(orders.get_open()[0])
+    clock.advance(minutes=10)
+
+    summary = make_service(session, connector, clock).run("full")
+    assert summary.status == SYNC_STATUS_COMPLETED
+    assert summary.orders_closed_missing == 1 and summary.pruned_orders == 0
+    closed = orders.get("LEGACY-02")
+    assert closed.order_status is OrderStatus.CANCELLED and not closed.is_open
+    assert closed.attributes["missing_from_erp_since"] == summary.started_at.isoformat()
+    assert closed.attributes["source"] == "test"  # other attributes untouched
+    assert [op.operation_id for op in orders.get_operations("LEGACY-02")] == ["LEGACY-02-10"]  # kept
+    assert len(orders.get_open()[0]) == open_before - 1  # orders the ERP still serves are untouched
+    record = SyncRunRepository(session).get(summary.run_id)
+    assert record.details["orders_closed_missing"] == 1
+    assert summary.to_dict()["orders_closed_missing"] == 1
+
+    again = make_service(session, connector, clock).run("full")  # already closed: not counted twice
+    assert again.orders_closed_missing == 0
+    assert orders.get("LEGACY-02").attributes["missing_from_erp_since"] == summary.started_at.isoformat()
+
+
+def test_full_sync_with_an_empty_order_fetch_closes_nothing(
+    session: Session, dataset: SyntheticDataset, connector: MockERPConnector, clock: FrozenClock
+) -> None:
+    make_service(session, connector, clock).run("full")
+    orders = OrderRepository(session)
+    open_before = len(orders.get_open()[0])
+    assert open_before > 0
+
+    class NoOrders:
+        name = "no-orders"
+
+        def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+            fetch = getattr(connector, name)
+            if name in ("fetch_orders", "fetch_operations", "fetch_production_status"):
+                return lambda since=None: []
+            return fetch
+
+    summary = make_service(session, NoOrders(), clock).run("full")
+    assert summary.orders_closed_missing == 0 and summary.records_fetched["order"] == 0
+    assert len(orders.get_open()[0]) == open_before
+
+
 # ---------------------------------------------------------------- snapshot
 
 

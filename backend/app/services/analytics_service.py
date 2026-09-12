@@ -9,7 +9,10 @@ Numbers come from two places and the response says which:
 * **live** — otherwise the analytics engines are re-run on the live snapshot
   with the active plan's stored entries (priorities are re-evaluated by the
   priority engine so new orders are covered). The live context is built once
-  per service instance (one request / one job) and reused by every view.
+  per service instance (one request / one job) and reused by every view. It
+  also runs the Data Quality engine so capacity, bottlenecks and KPIs skip
+  the orders the planning pipeline withholds from scheduling, exactly as a
+  pipeline run does.
 
 Capacity and OTD are always live: their parameters (dimension, period,
 horizon, window) vary per call and the engines are cheap. ``refresh_alerts``
@@ -63,6 +66,7 @@ from app.engines.analytics.common import DIMENSIONS, Dimension
 from app.engines.calendar.builder import build_calendars
 from app.engines.calendar.calendar import MachineCalendar
 from app.engines.constraints.registry import default_constraint_engine
+from app.engines.data_quality.engine import DataQualityEngine
 from app.engines.pipeline import PipelineResult
 from app.engines.priority.context import PriorityContextBuilder
 from app.engines.priority.engine import PriorityEngine
@@ -95,6 +99,7 @@ class LiveContext:
     priorities: dict[str, PriorityResult]
     version: ScheduleVersionInfo | None
     schedule: ScheduleResult | None
+    dq_excluded_order_ids: frozenset[str] = frozenset()  # withheld from scheduling by data quality
 
 
 @dataclass(slots=True)
@@ -199,11 +204,14 @@ class AnalyticsService(Service):
             if version is not None:
                 entries = self._versions.get_entries(schedule_version_id=version.schedule_version_id)
                 schedule = schedule_result_from_version(version, entries)
-            self._ctx = LiveContext(now, snapshot, config, calendars, priorities, version, schedule)
+            dq_report = DataQualityEngine().run(snapshot, config.data_quality)
+            excluded = frozenset(dq_report.unschedulable_order_ids)
+            self._ctx = LiveContext(now, snapshot, config, calendars, priorities, version, schedule, excluded)
             log.debug(
                 "analytics.live_context",
                 orders=len(snapshot.orders),
                 version=version and version.version_number,
+                dq_excluded=len(excluded),
             )
         return self._ctx
 
@@ -217,7 +225,14 @@ class AnalyticsService(Service):
                 return KpiView(kpis, SOURCE_STORED, kpis.as_of, version)
         ctx = self.live()
         kpis = compute_executive_kpis(
-            ctx.snapshot, ctx.priorities, ctx.schedule, ctx.now, ctx.config.scheduling, ctx.calendars
+            ctx.snapshot,
+            ctx.priorities,
+            ctx.schedule,
+            ctx.now,
+            ctx.config.scheduling,
+            ctx.calendars,
+            data_quality=ctx.config.data_quality,
+            exclude_order_ids=ctx.dq_excluded_order_ids,
         )
         return KpiView(kpis, SOURCE_LIVE, ctx.now, version)
 
@@ -242,7 +257,15 @@ class AnalyticsService(Service):
                 f"horizon_days must be in 1..{MAX_HORIZON_DAYS}", details={"horizon_days": horizon}
             )
         return compute_capacity(
-            ctx.snapshot, ctx.schedule, ctx.calendars, ctx.now, horizon, dimension, period
+            ctx.snapshot,
+            ctx.schedule,
+            ctx.calendars,
+            ctx.now,
+            horizon,
+            dimension,
+            period,
+            data_quality=ctx.config.data_quality,
+            exclude_order_ids=ctx.dq_excluded_order_ids,
         )
 
     def bottlenecks(self) -> BottleneckView:
@@ -264,6 +287,8 @@ class AnalyticsService(Service):
             ctx.now,
             ctx.config.scheduling,
             ctx.config.alerts,
+            data_quality=ctx.config.data_quality,
+            exclude_order_ids=ctx.dq_excluded_order_ids,
         )
         return BottleneckView(items, SOURCE_LIVE, ctx.now, version)
 
@@ -315,9 +340,19 @@ class AnalyticsService(Service):
             cfg.scheduling.horizon_days,
             "machine_group",
             "week",
+            data_quality=cfg.data_quality,
+            exclude_order_ids=ctx.dq_excluded_order_ids,
         )
         bottlenecks = find_bottlenecks(
-            ctx.snapshot, ctx.priorities, ctx.schedule, ctx.calendars, ctx.now, cfg.scheduling, cfg.alerts
+            ctx.snapshot,
+            ctx.priorities,
+            ctx.schedule,
+            ctx.calendars,
+            ctx.now,
+            cfg.scheduling,
+            cfg.alerts,
+            data_quality=cfg.data_quality,
+            exclude_order_ids=ctx.dq_excluded_order_ids,
         )
         alerts = evaluate_alerts(
             ctx.snapshot,
