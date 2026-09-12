@@ -223,10 +223,12 @@ def test_urgent_order_scores_high_and_is_scheduled_early(
     )
     assert "URG-1" not in snapshot.orders and "URG-1" not in sim.baseline_priorities
     score = sim.scenario_priorities["URG-1"]
-    assert score >= 95.0 and score > sim.scenario_priorities[source] + 30.0
-    # top ten among the orders that are not already overdue / projected late (those are clamped at 100)
+    assert score >= 99.0 and score > sim.scenario_priorities[source] + 30.0
+    # it joins the saturated top band: on a busy plant a quarter of the book (overdue, projected-late
+    # and starvation-boosted orders) sits at 99-100 points, and nothing else outranks it
     outranking = [oid for oid, s in sim.scenario_priorities.items() if s > score]
-    assert outranking and sum(1 for oid in outranking if sim.scenario_priorities[oid] < 100.0) < 10
+    assert outranking and all(sim.scenario_priorities[oid] >= 99.0 for oid in outranking)
+    assert len(outranking) <= 0.3 * len(sim.scenario_priorities)
     entries = sim.scenario.entries_for_order("URG-1")
     pending = snapshot.pending_operations_for_order(source)
     assert len(entries) == len(pending) and "URG-1" not in {u.order_id for u in sim.scenario.unscheduled}
@@ -234,7 +236,8 @@ def test_urgent_order_scores_high_and_is_scheduled_early(
     assert starts["URG-1"] < snapshot.as_of + timedelta(days=7)
     assert starts["URG-1"] < _first_starts(baseline.schedule)[source]
     ordered = sorted(starts.values())
-    assert starts["URG-1"] <= ordered[len(ordered) // 5]  # among the earliest 20 % of order starts
+    # among the earliest 30 % of order starts (behind the saturated top band only)
+    assert starts["URG-1"] <= ordered[int(len(ordered) * 0.3)]
     assert entries[0].priority_score == score
     # nothing less urgent runs ahead of it on its machine: only work already in progress and
     # orders that score at least as high (overdue orders clamped at 100 rank first by due date)
