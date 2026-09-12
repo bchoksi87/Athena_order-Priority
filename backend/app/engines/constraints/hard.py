@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.clock import ensure_utc
-from app.domain.enums import LockType, MachineStatus, OperationStatus, OverrideType, ProcessType
+from app.domain.enums import LockType, OperationStatus, OverrideType, ProcessType
 from app.domain.models import Machine, Operation, Order
 from app.domain.results import Violation
 from app.domain.snapshot import PlanningSnapshot

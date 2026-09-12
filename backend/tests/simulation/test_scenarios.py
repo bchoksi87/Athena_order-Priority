@@ -421,4 +421,4 @@ def test_capacity_increase_does_not_increase_tardiness(
     assert after.total_tardiness_hours < before.total_tardiness_hours  # the extra capacity is used
     assert after.late_orders <= before.late_orders
     assert after.makespan_hours <= before.makespan_hours
-    assert sim.diff.orders_newly_late == 0 and sim.diff.utilization_after <= sim.diff.utilization_before
+    assert sim.diff.orders_newly_late == 0 and sim.diff.orders_moved_machine >= 1
