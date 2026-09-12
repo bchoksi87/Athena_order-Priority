@@ -14,7 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
-from app.core.clock import Clock
+from app.core.clock import Clock, ensure_utc
 from app.core.errors import NotFoundError
 
 log = structlog.get_logger(__name__)
@@ -148,10 +148,16 @@ def _create_mock_connector(clock: Clock, **options: Any) -> ERPConnector:
 
     dataset = options.get("dataset")
     if dataset is None:
+        # Anchor the synthetic plant to the current day (UTC midnight) so that
+        # "due today / overdue" reflect the real clock and the dataset stays
+        # stable for every sync run within the same day.
+        as_of = options.get("as_of")
+        if as_of is None:
+            as_of = ensure_utc(clock.now()).replace(hour=0, minute=0, second=0, microsecond=0)
         generator = SyntheticDataGenerator(
             seed=int(options.get("seed", 42)),
             scale=options.get("scale", "medium"),
-            as_of=options.get("as_of"),
+            as_of=as_of,
             dq_defect_ratio=float(options.get("dq_defect_ratio", 0.03)),
         )
         dataset = generator.generate()

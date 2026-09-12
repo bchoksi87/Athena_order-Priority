@@ -148,6 +148,10 @@ class OrderRepository(Repository):
     def count(self, filters: OrderFilters | None = None) -> int:
         return self._count(self._apply_filters(select(OrderRow), filters or OrderFilters()))
 
+    def count_operations(self) -> int:
+        """Number of stored operations across all orders (sync reconciliation)."""
+        return self._count(select(OperationRow))
+
     def status_counts(self) -> dict[str, int]:
         stmt = select(OrderRow.order_status, func.count(OrderRow.order_id)).group_by(OrderRow.order_status)
         return {status: int(n) for status, n in self._session.execute(stmt).all()}

@@ -18,6 +18,18 @@ The ``since`` watermark is the ``started_at`` of the most recent *completed*
 run (not its ``finished_at``), so records changed while that run was fetching
 are picked up again rather than lost. Without a completed run an incremental
 sync degrades to a full fetch (logged and recorded in the run details).
+
+Production status
+-----------------
+Progress reports are routed *after* validation: reports for operations kept in
+the batch are applied in memory (chronologically) before the upsert, the rest
+are applied against the stored operations (``unknown_operation`` when absent).
+
+Reconciliation
+--------------
+Full runs compare the connector counts with what the store holds afterwards
+(so stale local rows show up as drift); incremental runs can only compare the
+fetched slice with what was upserted from it.
 """
 
 from __future__ import annotations
@@ -198,6 +210,8 @@ class _Batch:
     default_calendar_id: str | None = None
     orders: list[Order] = field(default_factory=list)
     operations: list[Operation] = field(default_factory=list)
+    #: All progress reports of the run, chronological (routed by :meth:`SyncService._apply_progress`).
+    progress: list[ProductionStatusUpdate] = field(default_factory=list)
     #: Progress reports whose operation was not part of this batch (applied against the store).
     deferred_progress: list[ProductionStatusUpdate] = field(default_factory=list)
     progress_applied_in_batch: int = 0
@@ -280,12 +294,9 @@ class SyncService:
                 raw = self._fetch(since, summary)
                 batch = self._normalize(raw, summary)
                 self._validate(batch, summary)
+                self._apply_progress(batch)
                 self._upsert(batch, summary, sync_mode, started_at)
-                summary.reconciliation = reconcile(
-                    summary.records_fetched, summary.records_upserted, self._options.reconciliation
-                )
-                if sync_mode is SyncMode.FULL:
-                    summary.stored_totals = self._stored_totals()
+                self._reconcile(summary, sync_mode)
                 self._session.flush()
             except Exception as exc:
                 self._session.rollback()
@@ -352,24 +363,10 @@ class SyncService:
         batch.default_calendar_id = _default_calendar_id(
             raw.get("calendar", []), [c.calendar_id for c in batch.calendars]
         )
-        # Progress reports for operations in this batch are applied in memory (chronologically);
-        # the rest are applied against the stored operations during upsert.
-        by_id = {op.operation_id: op for op in batch.operations}
-        for update in sorted(
+        batch.progress = sorted(
             results["production_status"].items, key=lambda u: (u.reported_at, u.operation_id)
-        ):
-            operation = by_id.get(update.operation_id)
-            if operation is None:
-                batch.deferred_progress.append(update)
-                continue
-            update.apply(operation)
-            batch.progress_applied_in_batch += 1
-        log.info(
-            "sync.normalized",
-            issues=summary.issues_count,
-            progress_in_batch=batch.progress_applied_in_batch,
-            progress_deferred=len(batch.deferred_progress),
         )
+        log.info("sync.normalized", issues=summary.issues_count, progress_reports=len(batch.progress))
         return batch
 
     def _validate(self, batch: _Batch, summary: SyncRunSummary) -> None:
@@ -442,6 +439,27 @@ class SyncService:
                     )
                 )
         log.info("sync.validated", issues=summary.issues_count, operations_kept=len(kept))
+
+    @staticmethod
+    def _apply_progress(batch: _Batch) -> None:
+        """Route progress reports (after validation, so reports for dropped operations are deferred).
+
+        Reports for operations in the batch are applied in memory, chronologically; the
+        rest are applied against the stored operations during upsert.
+        """
+        by_id = {op.operation_id: op for op in batch.operations}
+        for update in batch.progress:  # already chronological
+            operation = by_id.get(update.operation_id)
+            if operation is None:
+                batch.deferred_progress.append(update)
+                continue
+            update.apply(operation)
+            batch.progress_applied_in_batch += 1
+        log.info(
+            "sync.progress_routed",
+            in_batch=batch.progress_applied_in_batch,
+            deferred=len(batch.deferred_progress),
+        )
 
     def _upsert(self, batch: _Batch, summary: SyncRunSummary, mode: SyncMode, synced_at: datetime) -> None:
         upserted = summary.records_upserted
@@ -518,10 +536,19 @@ class SyncService:
             return None, "none"
         return latest.started_at, latest.run_id
 
+    def _reconcile(self, summary: SyncRunSummary, mode: SyncMode) -> None:
+        """Grade connector-vs-store drift (full runs) or fetched-vs-upserted drift (incremental)."""
+        stored = dict(summary.records_upserted)
+        if mode is SyncMode.FULL:
+            summary.stored_totals = self._stored_totals()
+            stored.update(summary.stored_totals)
+        summary.reconciliation = reconcile(summary.records_fetched, stored, self._options.reconciliation)
+
     def _stored_totals(self) -> dict[str, int]:
         return {
             "customer": self._customers.count(),
             "order": self._orders.count(),
+            "operation": self._orders.count_operations(),
             "machine": len(self._machines.list_all()),
             "material": len(self._materials.list_all()),
             "tooling": len(self._tooling.list_all()),

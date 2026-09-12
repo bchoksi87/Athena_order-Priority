@@ -7,6 +7,7 @@ Commands
 ``sync``            run the ERP synchronisation (mock connector by default)
 ``snapshot-stats``  build the planning snapshot from the database and print its summary
 ``create-user``     add a local user account
+``worker``          background worker (placeholder until the worker is implemented; exits 2)
 
 Every command reads :class:`~app.core.config.Settings` (``PPSE_*`` environment
 variables / ``.env``); ``--database-url`` overrides the database for one call.
@@ -81,6 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
     user.add_argument("--role", required=True, choices=[r.value for r in Role])
     user.add_argument("--display-name", default=None)
     user.add_argument("--email", default=None)
+
+    sub.add_parser("worker", help="run the background worker (not yet implemented)")
     return parser
 
 
@@ -91,11 +94,18 @@ class CliContext:
     """Resolved settings plus lazily created engine, shared by the commands."""
 
     def __init__(
-        self, settings: Settings, database_url: str, out: IO[str], clock: Clock, as_json: bool
+        self,
+        settings: Settings,
+        database_url: str,
+        out: IO[str],
+        err: IO[str],
+        clock: Clock,
+        as_json: bool,
     ) -> None:
         self.settings = settings
         self.database_url = database_url
         self.out = out
+        self.err = err
         self.clock = clock
         self.as_json = as_json
         self._engine: Engine | None = None
@@ -121,10 +131,9 @@ def cmd_migrate(ctx: CliContext, args: argparse.Namespace) -> int:
 
     from alembic import command
 
-    config = Config(str(ALEMBIC_INI))
-    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     # alembic/env.py honours ``-x db_url=...``; the programmatic equivalent is ``cmd_opts.x``.
-    config.cmd_opts = argparse.Namespace(x=[f"db_url={ctx.database_url}"])
+    config = Config(str(ALEMBIC_INI), cmd_opts=argparse.Namespace(x=[f"db_url={ctx.database_url}"]))
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     log.info("cli.migrate", revision=args.revision, database=_redact(ctx.database_url))
     command.upgrade(config, args.revision)
     ctx.emit(
@@ -230,12 +239,19 @@ def cmd_create_user(ctx: CliContext, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_worker(ctx: CliContext, _args: argparse.Namespace) -> int:
+    """Placeholder: the APScheduler-based worker (sync/replan intervals) is not wired yet."""
+    ctx.err.write("background worker not yet implemented\n")
+    return EXIT_USAGE
+
+
 COMMANDS = {
     "migrate": cmd_migrate,
     "seed": cmd_seed,
     "sync": cmd_sync,
     "snapshot-stats": cmd_snapshot_stats,
     "create-user": cmd_create_user,
+    "worker": cmd_worker,
 }
 
 
@@ -262,7 +278,7 @@ def main(
     resolved = settings or get_settings()
     configure_logging(args.log_level or resolved.log_level, resolved.log_json)
     database_url = args.database_url or resolved.effective_database_url
-    ctx = CliContext(resolved, database_url, out, clock or SystemClock(), args.json)
+    ctx = CliContext(resolved, database_url, out, err, clock or SystemClock(), args.json)
     try:
         return COMMANDS[args.command](ctx, args)
     except AppError as exc:
