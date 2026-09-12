@@ -142,13 +142,23 @@ def priority_result_to_row(result: PriorityResult, run_id: str) -> PriorityResul
     )
 
 
-def priority_result_from_row(row: PriorityResultRow) -> PriorityResult:
+def priority_result_from_row(row: PriorityResultRow, *, include_breakdown: bool = True) -> PriorityResult:
+    """Domain result from a stored row.
+
+    ``include_breakdown=False`` skips decoding the factor/adjustment JSON (the
+    expensive part) for list views that only need the scalar columns; the
+    rendered ``explanation`` text is always available.
+    """
+    factors = [decode_dataclass(f, FactorScore) for f in row.factors or []] if include_breakdown else []
+    adjustments = (
+        [decode_dataclass(a, PriorityAdjustment) for a in row.adjustments or []] if include_breakdown else []
+    )
     return PriorityResult(
         order_id=row.order_id,
         score=row.score,
         base_score=row.base_score,
-        factors=[decode_dataclass(f, FactorScore) for f in row.factors or []],
-        adjustments=[decode_dataclass(a, PriorityAdjustment) for a in row.adjustments or []],
+        factors=factors,
+        adjustments=adjustments,
         readiness=ReadinessState(row.readiness),
         blocked=row.blocked,
         blocking_reasons=list(row.blocking_reasons or []),

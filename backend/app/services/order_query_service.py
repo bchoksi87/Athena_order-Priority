@@ -206,7 +206,7 @@ class OrderQueryService(Service):
         )
         ids = [o.order_id for o in orders]
         customers = self._customers.get_many({o.customer_id for o in orders})
-        results = self._results.latest_for_orders(ids)
+        results = self._results.latest_for_orders(ids, include_breakdown=False)
         version, by_order = self._current_schedule()
         overrides = self._overrides.list_active(now)
 

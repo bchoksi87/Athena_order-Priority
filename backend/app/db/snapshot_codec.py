@@ -167,7 +167,21 @@ def decode_dataclass(data: Mapping[str, Any], cls: type[T]) -> T:
     return cls(**kwargs)
 
 
+_TYPE_HINT_CACHE: dict[type[Any], dict[str, Any]] = {}
+
+
 def _type_hints(cls: type[Any]) -> dict[str, Any]:
+    """Resolved field annotations per dataclass, memoised (get_type_hints compiles string
+    annotations on every call, which dominated decoding time before caching)."""
+    cached = _TYPE_HINT_CACHE.get(cls)
+    if cached is not None:
+        return cached
+    hints = _resolve_type_hints(cls)
+    _TYPE_HINT_CACHE[cls] = hints
+    return hints
+
+
+def _resolve_type_hints(cls: type[Any]) -> dict[str, Any]:
     import app.domain.enums as enums_mod
     import app.domain.models as models_mod
     import app.domain.results as results_mod

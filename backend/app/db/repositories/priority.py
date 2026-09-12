@@ -67,8 +67,15 @@ class PriorityResultRepository(Repository):
         row = self._session.execute(stmt).scalar_one_or_none()
         return priority_result_from_row(row) if row else None
 
-    def latest_for_orders(self, order_ids: Iterable[str]) -> dict[str, PriorityResult]:
-        """Latest-run result for each order (from the latest run only)."""
+    def latest_for_orders(
+        self, order_ids: Iterable[str], *, include_breakdown: bool = True
+    ) -> dict[str, PriorityResult]:
+        """Latest-run result for each order (from the latest run only).
+
+        ``include_breakdown=False`` returns results without the decoded
+        factor/adjustment lists (scalar columns and explanation text only),
+        which is an order of magnitude cheaper for list views.
+        """
         run_id = self.latest_run_id()
         if run_id is None:
             return {}
@@ -78,7 +85,7 @@ class PriorityResultRepository(Repository):
                 PriorityResultRow.run_id == run_id, PriorityResultRow.order_id.in_(ids)
             )
             for row in self._session.execute(stmt).scalars():
-                out[row.order_id] = priority_result_from_row(row)
+                out[row.order_id] = priority_result_from_row(row, include_breakdown=include_breakdown)
         return out
 
     def history_for_order(self, order_id: str, limit: int = 20) -> list[PriorityResult]:
