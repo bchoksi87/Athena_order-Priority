@@ -93,3 +93,11 @@
   color: var(--fg-muted);
   white-space: pre-wrap;
 }
+.explain-subtotal {
+  font-weight: 500;
+  color: var(--fg-muted);
+  border-top-color: var(--border-subtle);
+}
+.explain-item[data-kind="cap"] .explain-name {
+  color: var(--status-at-risk);
+}

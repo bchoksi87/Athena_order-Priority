@@ -127,10 +127,10 @@ def measure_load(
         if not _due_within(order, as_of, window):
             continue
         for op in snapshot.pending_operations_for_order(order.order_id):
-            group = _group_of(op, snapshot)
-            if group is None:
+            op_group = _group_of(op, snapshot)
+            if op_group is None:
                 continue
-            load = report.groups[group]
+            load = report.groups[op_group]
             load.required_hours += _operation_hours(op, load.efficiency)
     return report
 

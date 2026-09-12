@@ -20,7 +20,10 @@ from app.core.errors import AuthenticationError
 from app.core.logging import bind_request_context
 from app.core.security import CurrentUser, decode_access_token, ensure_min_role, ensure_read_access
 from app.domain.enums import Role
+from app.engines.pipeline import PlanningPipeline
+from app.integration.connector import ERPConnector
 from app.services.alert_service import AlertService
+from app.services.analytics_service import AnalyticsService
 from app.services.audit_service import AuditService
 from app.services.config_service import ConfigService
 from app.services.customer_rule_service import CustomerRuleService
@@ -30,8 +33,14 @@ from app.services.lock_service import LockService
 from app.services.machine_query_service import MachineQueryService
 from app.services.order_query_service import OrderQueryService
 from app.services.override_service import OverrideService
+from app.services.replanning_service import ReplanningService
+from app.services.schedule_service import ScheduleService
+from app.services.schedule_view_service import ScheduleViewService
+from app.services.simulation_service import SimulationService
 from app.services.snapshot_service import SnapshotService
+from app.services.sync_admin_service import SyncAdminService, build_connector
 from app.services.user_service import UserService
+from app.services.writeback_service import WritebackService
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -227,4 +236,124 @@ __all__ += [
     "get_override_service",
     "get_snapshot_service",
     "get_user_service",
+]
+
+
+# ------------------------------------------------- planning / analytics / sync
+# Appended by the schedule/analytics/sync owner. The planning pipeline and the ERP
+# connector are built once per application (``app.state``); services stay per request.
+
+
+def get_pipeline(request: Request, clock: ClockDep) -> PlanningPipeline:
+    pipeline: PlanningPipeline | None = getattr(request.app.state, "pipeline", None)
+    if pipeline is None:
+        pipeline = PlanningPipeline(clock)
+        request.app.state.pipeline = pipeline
+    return pipeline
+
+
+def get_connector(request: Request, settings: SettingsDep, clock: ClockDep) -> ERPConnector:
+    connector: ERPConnector | None = getattr(request.app.state, "connector", None)
+    if connector is None:
+        connector = build_connector(settings, clock)
+        request.app.state.connector = connector
+    return connector
+
+
+PipelineDep = Annotated[PlanningPipeline, Depends(get_pipeline)]
+ConnectorDep = Annotated[ERPConnector, Depends(get_connector)]
+
+
+def get_writeback_service(session: SessionDep, clock: ClockDep, settings: SettingsDep) -> WritebackService:
+    return WritebackService(session, clock, settings)
+
+
+WritebackServiceDep = Annotated[WritebackService, Depends(get_writeback_service)]
+
+
+def get_schedule_service(
+    session: SessionDep,
+    clock: ClockDep,
+    settings: SettingsDep,
+    pipeline: PipelineDep,
+    audit: AuditServiceDep,
+    snapshots: SnapshotServiceDep,
+    writeback: WritebackServiceDep,
+) -> ScheduleService:
+    return ScheduleService(
+        session, clock, settings, pipeline, audit=audit, snapshots=snapshots, writeback=writeback
+    )
+
+
+ScheduleServiceDep = Annotated[ScheduleService, Depends(get_schedule_service)]
+
+
+def get_schedule_view_service(
+    session: SessionDep, clock: ClockDep, schedules: ScheduleServiceDep
+) -> ScheduleViewService:
+    return ScheduleViewService(session, clock, schedules)
+
+
+def get_analytics_service(
+    session: SessionDep, clock: ClockDep, snapshots: SnapshotServiceDep
+) -> AnalyticsService:
+    return AnalyticsService(session, clock, snapshots)
+
+
+def get_simulation_service(
+    session: SessionDep,
+    clock: ClockDep,
+    audit: AuditServiceDep,
+    snapshots: SnapshotServiceDep,
+    pipeline: PipelineDep,
+) -> SimulationService:
+    return SimulationService(session, clock, audit, snapshots, pipeline)
+
+
+def get_replanning_service(
+    session: SessionDep,
+    clock: ClockDep,
+    settings: SettingsDep,
+    schedules: ScheduleServiceDep,
+    audit: AuditServiceDep,
+    snapshots: SnapshotServiceDep,
+) -> ReplanningService:
+    return ReplanningService(session, clock, settings, schedules, audit=audit, snapshots=snapshots)
+
+
+def get_sync_admin_service(
+    session: SessionDep,
+    clock: ClockDep,
+    settings: SettingsDep,
+    connector: ConnectorDep,
+    audit: AuditServiceDep,
+) -> SyncAdminService:
+    return SyncAdminService(session, clock, settings, connector, audit=audit)
+
+
+ScheduleViewServiceDep = Annotated[ScheduleViewService, Depends(get_schedule_view_service)]
+AnalyticsServiceDep = Annotated[AnalyticsService, Depends(get_analytics_service)]
+SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+ReplanningServiceDep = Annotated[ReplanningService, Depends(get_replanning_service)]
+SyncAdminServiceDep = Annotated[SyncAdminService, Depends(get_sync_admin_service)]
+
+__all__ += [
+    "AnalyticsServiceDep",
+    "ConnectorDep",
+    "PipelineDep",
+    "ReplanningServiceDep",
+    "ScheduleServiceDep",
+    "ScheduleViewServiceDep",
+    "SimulationServiceDep",
+    "SyncAdminServiceDep",
+    "WritebackServiceDep",
+    "get_analytics_service",
+    "get_connector",
+    "get_pipeline",
+    "get_replanning_service",
+    "get_schedule_service",
+    "get_schedule_view_service",
+    "get_simulation_service",
+    "get_sync_admin_service",
+    "get_writeback_service",
 ]

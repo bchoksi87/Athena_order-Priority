@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     background_jobs_enabled: bool = False
     sync_interval_minutes: int = Field(default=15, ge=1)
     replan_interval_minutes: int = Field(default=30, ge=1)
+    alert_interval_minutes: int = Field(default=5, ge=1)
 
     seed_on_startup: bool = True
     currency: str = "INR"

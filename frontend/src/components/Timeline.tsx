@@ -20,6 +20,8 @@ export interface TimelineProps {
   height?: number;
   pxPerHour?: number;
   atRiskSlackHours?: number;
+  /** Number of local days to span starting at `day` (1 = day view, 7 = week view). */
+  days?: number;
 }
 
 const AXIS = 22;
@@ -35,11 +37,12 @@ export function Timeline({
   height = 72,
   pxPerHour = 48,
   atRiskSlackHours = 8,
+  days = 1,
 }: TimelineProps) {
   const start = startOfLocalDay(day);
-  const end = addDays(start, 1);
+  const end = addDays(start, Math.max(1, days));
   const scale = useMemo(() => createTimeScale(start, end, pxPerHour), [start, end, pxPerHour]);
-  const ticks = useMemo(() => generateTicks(scale, "day"), [scale]);
+  const ticks = useMemo(() => generateTicks(scale, days > 1 ? "week" : "day"), [scale, days]);
   const barTop = AXIS + 8;
   const barH = height - barTop - 8;
 
@@ -80,6 +83,18 @@ export function Timeline({
                 </text>
               </g>
             ))}
+          {days > 1
+            ? ticks
+                .filter((t) => t.major)
+                .map((t, i) => (
+                  <g key={`d${i}`}>
+                    <line className="timeline-grid timeline-grid-major" x1={t.x} x2={t.x} y1={0} y2={height} />
+                    <text className="timeline-day" x={t.x + 3} y={13}>
+                      {t.label}
+                    </text>
+                  </g>
+                ))
+            : null}
         </g>
         {downtime.flatMap((w, i) => {
           const a = parseUtc(w.start);
@@ -90,7 +105,7 @@ export function Timeline({
         })}
         {bars.length === 0 ? (
           <text className="timeline-empty" x={8} y={barTop + barH / 2 + 4}>
-            No scheduled work on this day
+            {days > 1 ? "No scheduled work in this period" : "No scheduled work on this day"}
           </text>
         ) : null}
         {bars.map(({ entry, run, setup }) => {

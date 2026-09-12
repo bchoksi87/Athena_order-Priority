@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -46,6 +47,8 @@ class ScheduleRepository(Repository):
         status: ScheduleStatus = ScheduleStatus.DRAFT,
         label: str | None = None,
         notes: str | None = None,
+        analytics: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> ScheduleVersionInfo:
         """Store a :class:`ScheduleResult` as a new monotonic schedule version."""
         version_id = new_id("sv")
@@ -71,6 +74,8 @@ class ScheduleRepository(Repository):
             unscheduled=[to_jsonable(u) for u in result.unscheduled],
             warnings=list(result.warnings),
             notes=notes,
+            analytics=analytics,
+            details=dict(details or {}),
         )
         self._session.add(row)
         self._session.add_all(schedule_entry_to_row(e, version_id) for e in result.entries)
@@ -89,6 +94,11 @@ class ScheduleRepository(Repository):
             )
         return _version_info(row)
 
+    def get_by_run_id(self, run_id: str) -> ScheduleVersionInfo | None:
+        stmt = select(ScheduleVersionRow).where(ScheduleVersionRow.run_id == run_id).limit(1)
+        row = self._session.execute(stmt).scalar_one_or_none()
+        return _version_info(row) if row else None
+
     def get_latest(self, status: ScheduleStatus | None = None) -> ScheduleVersionInfo | None:
         """Newest version, optionally restricted to one status."""
         stmt = select(ScheduleVersionRow).order_by(ScheduleVersionRow.version_number.desc()).limit(1)
@@ -105,11 +115,30 @@ class ScheduleRepository(Repository):
                 return info
         return None
 
-    def list_versions(self, *, offset: int = 0, limit: int = DEFAULT_PAGE_SIZE) -> Page:
+    def list_versions(
+        self, *, status: ScheduleStatus | None = None, offset: int = 0, limit: int = DEFAULT_PAGE_SIZE
+    ) -> Page:
         stmt = select(ScheduleVersionRow).order_by(ScheduleVersionRow.version_number.desc())
+        if status is not None:
+            stmt = stmt.where(ScheduleVersionRow.status == status.value)
         page = self._paginate(stmt, offset, limit)
         page.items = [_version_info(r) for r in page.items]
         return page
+
+    def count_versions(self, status: ScheduleStatus | None = None) -> int:
+        stmt = select(ScheduleVersionRow)
+        if status is not None:
+            stmt = stmt.where(ScheduleVersionRow.status == status.value)
+        return self._count(stmt)
+
+    def update_details(self, version_number: int, patch: dict[str, Any]) -> ScheduleVersionInfo:
+        """Merge ``patch`` into the version's ``details`` JSON (receipts, replan decisions ...)."""
+        row = self._version_row(version_number)
+        merged = dict(row.details or {})
+        merged.update(patch)
+        row.details = merged
+        self._flush()
+        return _version_info(row)
 
     def set_status(
         self,
@@ -245,6 +274,14 @@ class OptimizationRunRepository(Repository):
         page.items = [_run_record(r) for r in page.items]
         return page
 
+    def count(self, kind: str | None = None, status: str | None = None) -> int:
+        stmt = select(OptimizationRunRow)
+        if kind:
+            stmt = stmt.where(OptimizationRunRow.kind == kind)
+        if status:
+            stmt = stmt.where(OptimizationRunRow.status == status)
+        return self._count(stmt)
+
     def latest(self, kind: str | None = None, status: str | None = None) -> OptimizationRunRecord | None:
         stmt = select(OptimizationRunRow).order_by(OptimizationRunRow.started_at.desc()).limit(1)
         if kind:
@@ -286,6 +323,8 @@ def _version_info(row: ScheduleVersionRow) -> ScheduleVersionInfo:
         unscheduled=list(row.unscheduled or []),
         warnings=list(row.warnings or []),
         notes=row.notes,
+        analytics=dict(row.analytics) if row.analytics else None,
+        details=dict(row.details or {}),
     )
 
 

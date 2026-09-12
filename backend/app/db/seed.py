@@ -1,6 +1,9 @@
 """Development seeding: one user per role and the default configuration.
 
-Both functions are idempotent so they can run on every dev start-up.
+Both functions are idempotent so they can run on every dev start-up. The
+well-known development accounts are never created in ``prod`` unless the
+operator forces it (``python -m app.cli seed --force``); creating them in any
+other environment logs a warning so the credentials are not forgotten.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from dataclasses import dataclass
 import structlog
 from sqlalchemy.orm import Session
 
+from app.core.errors import ConfigurationError
 from app.db.records import UserRecord
 from app.db.repositories.config import ConfigRepository
 from app.db.repositories.users import UserRepository
@@ -38,8 +42,24 @@ DEV_USERS: tuple[SeedUser, ...] = (
 )
 
 
-def seed_users(session: Session, users: tuple[SeedUser, ...] = DEV_USERS) -> list[UserRecord]:
-    """Create any of ``users`` that do not exist yet; returns the created records."""
+def seed_users(
+    session: Session,
+    users: tuple[SeedUser, ...] = DEV_USERS,
+    *,
+    environment: str = "dev",
+    force: bool = False,
+) -> list[UserRecord]:
+    """Create any of ``users`` that do not exist yet; returns the created records.
+
+    Refuses (``ConfigurationError``) in ``prod`` unless ``force`` is set: the
+    accounts carry well-known passwords.
+    """
+    if environment == "prod" and not force:
+        raise ConfigurationError(
+            "refusing to seed the well-known development accounts in prod; "
+            "pass force=True (CLI: `seed --force`) to override",
+            details={"environment": environment, "usernames": [u.username for u in users]},
+        )
     repo = UserRepository(session)
     created: list[UserRecord] = []
     for seed in users:
@@ -54,7 +74,14 @@ def seed_users(session: Session, users: tuple[SeedUser, ...] = DEV_USERS) -> lis
             )
         )
     if created:
-        log.info("seeded_users", usernames=[u.username for u in created])
+        log.info("seeded_users", usernames=[u.username for u in created], environment=environment)
+        if environment != "test":
+            log.warning(
+                "dev_accounts_seeded",
+                environment=environment,
+                usernames=[u.username for u in created],
+                hint="well-known development passwords; change or disable these accounts before exposure",
+            )
     return created
 
 
@@ -70,8 +97,8 @@ def seed_default_config(session: Session, created_by: str | None = None) -> bool
     return True
 
 
-def seed_all(session: Session) -> None:
-    seed_users(session)
+def seed_all(session: Session, *, environment: str = "dev", force: bool = False) -> None:
+    seed_users(session, environment=environment, force=force)
     seed_default_config(session)
 
 

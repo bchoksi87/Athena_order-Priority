@@ -25,30 +25,31 @@ from app.domain.models import Customer, Machine, Material, Operation, Order, Too
 from synthetic import catalog
 from synthetic.catalog import ScaleProfile
 
-#: Order status mix for the month's order book (weights sum to 1.0). About 18 %
-#: of the lines are already completed / packed / shipped: they are history for
-#: the OTD and customer screens and carry no load; the remaining ~82 % are the
-#: open book the capacity calibration is based on (see ``synthetic.generator``).
+#: Order status mix for the month's order book (weights sum to 1.0). A quarter
+#: of the lines are already completed / packed / shipped (the snapshot is taken
+#: mid-month): they are history for the OTD and customer screens and carry no
+#: load; the other ~75 % are the open book the capacity calibration is based on
+#: (see ``synthetic.generator``).
 STATUS_MIX: tuple[tuple[OrderStatus, float], ...] = (
-    (OrderStatus.NEW, 0.09),
-    (OrderStatus.RELEASED, 0.205),
-    (OrderStatus.PLANNED, 0.12),
-    (OrderStatus.SCHEDULED, 0.09),
-    (OrderStatus.IN_PRODUCTION, 0.14),
-    (OrderStatus.PARTIALLY_COMPLETED, 0.05),
+    (OrderStatus.NEW, 0.08),
+    (OrderStatus.RELEASED, 0.20),
+    (OrderStatus.PLANNED, 0.11),
+    (OrderStatus.SCHEDULED, 0.08),
+    (OrderStatus.IN_PRODUCTION, 0.13),
+    (OrderStatus.PARTIALLY_COMPLETED, 0.045),
     (OrderStatus.QUALITY_INSPECTION, 0.02),
     (OrderStatus.REWORK, 0.02),
-    (OrderStatus.ON_HOLD, 0.035),
-    (OrderStatus.MATERIAL_WAITING, 0.03),
+    (OrderStatus.ON_HOLD, 0.03),
+    (OrderStatus.MATERIAL_WAITING, 0.025),
     (OrderStatus.TOOLING_WAITING, 0.01),
-    (OrderStatus.COMPLETED, 0.06),
-    (OrderStatus.PACKED, 0.03),
-    (OrderStatus.SHIPPED, 0.09),
+    (OrderStatus.COMPLETED, 0.07),
+    (OrderStatus.PACKED, 0.04),
+    (OrderStatus.SHIPPED, 0.14),
 )
 
 _TIER_ORDER_WEIGHT: dict[CustomerTier, float] = {
-    CustomerTier.STRATEGIC: 6.0,
-    CustomerTier.KEY: 3.0,
+    CustomerTier.STRATEGIC: 3.0,
+    CustomerTier.KEY: 2.0,
     CustomerTier.STANDARD: 1.0,
     CustomerTier.LOW: 0.5,
 }
@@ -68,6 +69,19 @@ _CNC_MATERIAL_CLASSES: tuple[str, ...] = (
 )
 _CNC_MATERIAL_WEIGHTS: tuple[float, ...] = (3.0, 3.0, 1.0, 1.0, 1.0, 0.5)
 _AM_SHARE = 0.30  # share of part lines that are 3D-printed rather than machined
+#: Material consumption per piece (stock unit: kg, or litres for resin) by material class.
+_MATERIAL_PER_UNIT: dict[str, tuple[float, float]] = {
+    "aluminium": (0.05, 1.5),
+    "steel": (0.05, 1.5),
+    "titanium": (0.05, 0.8),
+    "copper_alloy": (0.05, 1.0),
+    "superalloy": (0.05, 0.8),
+    "polymer": (0.02, 0.8),
+    "resin": (0.02, 0.3),
+    "polymer_powder": (0.02, 0.4),
+    "metal_powder": (0.02, 0.5),
+    "filament": (0.02, 0.3),
+}
 _DRAWING_UNAPPROVED_SHARE = 0.02
 _ASSEMBLY_SHARE = 0.04
 _HOLD_REASONS = ("customer request", "credit hold", "engineering change pending", "awaiting PO amendment")
@@ -85,6 +99,9 @@ class OrderBuildContext:
     machines: list[Machine]
     materials: list[Material]
     tooling: list[Tooling]
+    #: separate stream for machine-level picks (pinned machine, eligible set, cycle
+    #: overrides) so that the order book itself does not depend on machine counts
+    machine_rng: random.Random | None = None
     machines_by_group: dict[str, list[Machine]] = field(default_factory=dict)
     materials_by_class: dict[str, list[Material]] = field(default_factory=dict)
     tooling_by_group: dict[str, list[Tooling]] = field(default_factory=dict)
@@ -93,6 +110,8 @@ class OrderBuildContext:
     groups_for_material: dict[str, set[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if self.machine_rng is None:
+            self.machine_rng = random.Random(self.rng.random())
         for machine in self.machines:
             self.machines_by_group.setdefault(machine.machine_group, []).append(machine)
             accepted = machine.compatible_materials or {m.material_id for m in self.materials}
@@ -145,18 +164,48 @@ def _pick_status(rng: random.Random) -> OrderStatus:
     return OrderStatus.RELEASED
 
 
-def _due_offset_days(rng: random.Random, closed: bool) -> int:
-    """Due date offset from ``as_of``: ~8 % overdue, ~11 % due today/tomorrow, rest 2-30 days out."""
-    if closed:
+@dataclass(frozen=True, slots=True)
+class _DueProfile:
+    """Due-date offsets (days from ``as_of``) for one group of order statuses."""
+
+    overdue_share: float
+    due_soon_share: float  # today or tomorrow
+    low: float  # triangular distribution of the remaining due dates
+    high: float
+    mode: float
+
+
+#: Where an order stands correlates with when it is due: unreleased work is
+#: mostly due weeks out, work on the floor is due soon, and blocked or
+#: inspected work has drifted towards (or past) its date. Overall this gives
+#: ~7 % overdue and ~7 % due today/tomorrow across the open book.
+_DUE_PROFILES: dict[OrderStatus, _DueProfile] = {
+    OrderStatus.NEW: _DueProfile(0.03, 0.02, 4.0, 35.0, 16.0),
+    OrderStatus.RELEASED: _DueProfile(0.03, 0.02, 4.0, 35.0, 16.0),
+    OrderStatus.PLANNED: _DueProfile(0.03, 0.02, 4.0, 35.0, 16.0),
+    OrderStatus.SCHEDULED: _DueProfile(0.04, 0.05, 2.0, 25.0, 8.0),
+    OrderStatus.IN_PRODUCTION: _DueProfile(0.12, 0.15, 2.0, 18.0, 5.0),
+    OrderStatus.PARTIALLY_COMPLETED: _DueProfile(0.12, 0.15, 2.0, 18.0, 5.0),
+    OrderStatus.QUALITY_INSPECTION: _DueProfile(0.20, 0.25, 2.0, 8.0, 3.0),
+    OrderStatus.REWORK: _DueProfile(0.20, 0.25, 2.0, 8.0, 3.0),
+    OrderStatus.ON_HOLD: _DueProfile(0.15, 0.08, 2.0, 25.0, 8.0),
+    OrderStatus.MATERIAL_WAITING: _DueProfile(0.15, 0.08, 2.0, 25.0, 8.0),
+    OrderStatus.TOOLING_WAITING: _DueProfile(0.15, 0.08, 2.0, 25.0, 8.0),
+}
+_DEFAULT_DUE_PROFILE = _DueProfile(0.08, 0.08, 2.0, 30.0, 8.0)
+
+
+def _due_offset_days(rng: random.Random, status: OrderStatus) -> int:
+    """Due date offset from ``as_of`` drawn from the status' :class:`_DueProfile`."""
+    if status in (OrderStatus.COMPLETED, OrderStatus.PACKED, OrderStatus.SHIPPED):
         return -rng.randint(0, 10)
+    profile = _DUE_PROFILES.get(status, _DEFAULT_DUE_PROFILE)
     roll = rng.random()
-    if roll < 0.08:
+    if roll < profile.overdue_share:
         return -rng.randint(1, 6)
-    if roll < 0.14:
-        return 0
-    if roll < 0.19:
-        return 1
-    return round(rng.triangular(2.0, 30.0, 8.0))
+    if roll < profile.overdue_share + profile.due_soon_share:
+        return rng.randint(0, 1)
+    return round(rng.triangular(profile.low, profile.high, profile.mode))
 
 
 def _quantity(rng: random.Random, kind: str, multiplier: float = 1.0) -> float:
@@ -256,6 +305,7 @@ class OrderFactory:
         quantity = _quantity(rng, kind, self._ctx.profile.lot_multiplier)
         status = _pick_status(rng)
         closed = status in (OrderStatus.COMPLETED, OrderStatus.PACKED, OrderStatus.SHIPPED)
+        due_offset = _due_offset_days(rng, status)
         if status == OrderStatus.MATERIAL_WAITING and material is not None:
             # Swap in an out-of-stock material of the *same class* so the route stays
             # consistent with the machine groups' material compatibility; when none
@@ -278,9 +328,9 @@ class OrderFactory:
         order_id = f"{order_no}-{line_no:02d}"
         setup_family = f"{material.material_id.removeprefix('MAT-')}-{family}" if material else family
         operations = self._build_operations(order_id, route, primary_group, material, quantity, setup_family)
-        self._apply_progress(status, operations, quantity)
+        self._apply_progress(status, operations, quantity, due_offset)
 
-        due_day = as_of.date() + timedelta(days=_due_offset_days(rng, closed))
+        due_day = as_of.date() + timedelta(days=due_offset)
         due = datetime.combine(due_day, datetime.min.time(), tzinfo=as_of.tzinfo) + _DUE_TIME_UTC
         lead = timedelta(days=rng.randint(7, 45))
         order_date = min(due - lead, as_of - timedelta(days=1))
@@ -366,6 +416,7 @@ class OrderFactory:
         setup_family: str,
     ) -> list[Operation]:
         rng = self._rng
+        machine_rng = self._ctx.machine_rng or rng
         ops: list[Operation] = []
         previous: Operation | None = None
         for index, process in enumerate(route):
@@ -388,15 +439,17 @@ class OrderFactory:
                 pool = self._ctx.tooling_by_group[group]
                 tooling_ids = {t.tooling_id for t in rng.sample(pool, min(len(pool), rng.randint(1, 2)))}
             machine_id = (
-                machines[rng.randrange(len(machines))].machine_id if machines and rng.random() < 0.2 else None
+                machines[machine_rng.randrange(len(machines))].machine_id
+                if machines and machine_rng.random() < 0.2
+                else None
             )
             eligible: set[str] = set()
-            if index == 0 and len(machines) > 2 and rng.random() < 0.1:
-                eligible = {m.machine_id for m in rng.sample(machines, 2)}
+            if index == 0 and len(machines) > 2 and machine_rng.random() < 0.1:
+                eligible = {m.machine_id for m in machine_rng.sample(machines, 2)}
             overrides: dict[str, float] = {}
-            if index == 0 and machines and rng.random() < 0.15:
-                for machine in rng.sample(machines, min(2, len(machines))):
-                    overrides[machine.machine_id] = round(cycle * rng.uniform(0.85, 1.25), 2)
+            if index == 0 and machines and machine_rng.random() < 0.15:
+                for machine in machine_rng.sample(machines, min(2, len(machines))):
+                    overrides[machine.machine_id] = round(cycle * machine_rng.uniform(0.85, 1.25), 2)
             op = Operation(
                 operation_id=self._next_op_id(),
                 order_id=order_id,
@@ -412,9 +465,11 @@ class OrderFactory:
                 operation_status=OperationStatus.PENDING,
                 prerequisite_operation_id=previous.operation_id if previous else None,
                 material_id=material.material_id if (index == 0 and material) else None,
-                material_quantity_per_unit=round(rng.uniform(0.05, 2.5), 3)
-                if (index == 0 and material)
-                else None,
+                material_quantity_per_unit=(
+                    round(rng.uniform(*_MATERIAL_PER_UNIT[material.material_type]), 3)
+                    if (index == 0 and material)
+                    else None
+                ),
                 tooling_ids=tooling_ids,
                 operator_requirement="certified" if process == ProcessType.INSPECTION else None,
                 quality_requirement="CMM report" if process == ProcessType.INSPECTION else None,
@@ -424,7 +479,9 @@ class OrderFactory:
             previous = op
         return ops
 
-    def _apply_progress(self, status: OrderStatus, ops: list[Operation], quantity: float) -> None:
+    def _apply_progress(
+        self, status: OrderStatus, ops: list[Operation], quantity: float, due_offset: int
+    ) -> None:
         rng = self._rng
         as_of = self._ctx.as_of
         n = len(ops)
@@ -449,7 +506,11 @@ class OrderFactory:
         elif status == OrderStatus.ON_HOLD:
             ops[0].operation_status = OperationStatus.ON_HOLD
         elif status in (OrderStatus.IN_PRODUCTION, OrderStatus.PARTIALLY_COMPLETED):
+            # work due in a few days has progressed further down its route; overdue
+            # work is stuck anywhere along it
             done = rng.randint(0, max(0, n - 2))
+            if due_offset >= 0:
+                done = max(done, min(n - 2, n - 2 - due_offset))
             for i in range(done):
                 complete(ops[i], hours_ago=float((done - i) * 10 + rng.randint(1, 20)))
             current = ops[done]

@@ -60,38 +60,52 @@ class ScaleProfile:
 # cell and the CMM room as the bottlenecks (see the calibration notes in
 # ``synthetic.generator``). Large is medium x4 (20,000 vs 5,000 lines).
 _SMALL_MACHINES = {  # no AM post cell: the deburr bay strips supports
-    "CNC3": 2,
+    "CNC3": 3,
     "CNC5": 2,
     "LATHE": 2,
     "AM_SLA": 1,
     "AM_FDM": 1,
     "DEBURR": 2,
-    "CMM": 1,
+    "CMM": 2,
     "SURF": 1,
     "ASSY": 1,
     "PACK": 1,
 }
 
 _MEDIUM_MACHINES = {
-    "CNC3": 14,
+    "CNC3": 12,
     "CNC5": 4,
-    "LATHE": 6,
+    "LATHE": 5,
     "AM_SLA": 2,
     "AM_MJF": 2,
     "AM_FDM": 2,
     "AM_DMLS": 2,
-    "DEBURR": 6,
+    "DEBURR": 5,
     "CMM": 5,
     "SURF": 3,
     "AMPOST": 3,
-    "ASSY": 3,
+    "ASSY": 2,
     "PACK": 3,
 }
 
-_LARGE_MACHINES = {group: count * 4 for group, count in _MEDIUM_MACHINES.items()}
+_LARGE_MACHINES = {  # ~medium x4, 5-axis cell and CMM room kept at ~100-110 % load
+    "CNC3": 48,
+    "CNC5": 14,
+    "LATHE": 20,
+    "AM_SLA": 8,
+    "AM_MJF": 8,
+    "AM_FDM": 8,
+    "AM_DMLS": 8,
+    "DEBURR": 20,
+    "CMM": 20,
+    "SURF": 12,
+    "AMPOST": 12,
+    "ASSY": 8,
+    "PACK": 12,
+}
 
 SCALES: dict[str, ScaleProfile] = {
-    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES, lot_multiplier=6.0),
+    "small": ScaleProfile("small", 80, 300, 20, 16, _SMALL_MACHINES, lot_multiplier=12.0),
     "medium": ScaleProfile("medium", 800, 5_000, 33, 40, _MEDIUM_MACHINES),
     "large": ScaleProfile("large", 800, 20_000, 33, 40, _LARGE_MACHINES),
 }

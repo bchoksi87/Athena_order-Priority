@@ -311,9 +311,14 @@ export interface OtdPoint {
   on_time_pct: number | null;
 }
 
+/** DataQualityIssueResponse: one issue of the latest data-quality run (GET /data-quality/issues). */
 export interface DataQualityIssue {
-  issue_id?: string;
+  issue_id: string;
+  run_id: string;
+  detected_at: string;
+  /** Serialised enum value (DataQualityCode). */
   code: DataQualityCode;
+  /** Serialised enum value (DataQualitySeverity). */
   severity: DataQualitySeverity;
   entity_type: string;
   entity_id: string;
@@ -321,9 +326,9 @@ export interface DataQualityIssue {
   field_name: string | null;
   recommendation: string | null;
   details: Record<string, unknown>;
-  detected_at?: string | null;
 }
 
+/** AlertResponse (GET /alerts). */
 export interface Alert {
   alert_id: string;
   alert_type: AlertType;
@@ -332,29 +337,32 @@ export interface Alert {
   reason: string;
   recommended_action: string;
   raised_at: string;
+  last_seen_at: string;
+  occurrences: number;
+  active: boolean;
   order_id: string | null;
   machine_id: string | null;
   entity_ref: string | null;
-  dedupe_key: string;
   details: Record<string, unknown>;
   acknowledged: boolean;
-  acknowledged_by?: string | null;
-  acknowledged_at?: string | null;
-  resolved_at?: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
 }
 
-/** audit_log row (DESIGN_CONTRACT §10). */
+/** AuditEntryResponse: one audit_log row (GET /audit, OrderDetail.audit). */
 export interface AuditEntry {
   audit_id: string;
   user_id: string;
-  username?: string | null;
   timestamp: string;
   entity_type: string;
   entity_id: string;
   action: string;
-  previous_value: unknown;
-  new_value: unknown;
+  previous_value: Record<string, unknown> | unknown[] | null;
+  new_value: Record<string, unknown> | unknown[] | null;
   reason: string | null;
+  request_id: string | null;
+  details: Record<string, unknown>;
 }
 
 export interface SyncRun {

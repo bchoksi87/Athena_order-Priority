@@ -249,7 +249,7 @@ ASSEMBLY_ROUTE: tuple[ProcessType, ...] = (ProcessType.ASSEMBLY, ProcessType.INS
 
 #: 5-axis parts are the complex ones: their machining cycle runs longer than the
 #: process average (relative to the 3-axis / turning work).
-FIVE_AXIS_CYCLE_FACTOR = 1.3
+FIVE_AXIS_CYCLE_FACTOR = 1.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,7 +274,7 @@ PROCESS_TIMING: dict[ProcessType, ProcessTiming] = {
     ProcessType.FINISHING: ProcessTiming(5.0, 15.0, 2.0, 10.0),
     ProcessType.HEAT_TREATMENT: ProcessTiming(30.0, 60.0, 3.0, 12.0),
     ProcessType.SURFACE_TREATMENT: ProcessTiming(15.0, 40.0, 0.5, 3.0),
-    ProcessType.INSPECTION: ProcessTiming(5.0, 15.0, 0.5, 4.0),
+    ProcessType.INSPECTION: ProcessTiming(6.0, 18.0, 0.6, 4.8),
     ProcessType.ASSEMBLY: ProcessTiming(10.0, 30.0, 2.0, 12.0),
     ProcessType.PACKING: ProcessTiming(5.0, 10.0, 0.3, 2.0),
     ProcessType.OTHER: ProcessTiming(10.0, 30.0, 1.0, 10.0),

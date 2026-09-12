@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.errors import ConfigurationError
 from app.db.repositories.config import ConfigRepository
 from app.db.repositories.users import UserRepository
 from app.db.seed import DEV_USERS, seed_all, seed_default_config, seed_users
@@ -40,3 +41,14 @@ def test_seed_all_runs_both(session: Session) -> None:
     seed_all(session)
     assert ConfigRepository(session).has_active()
     assert UserRepository(session).get_by_username("admin") is not None
+
+
+def test_seed_users_refuses_prod_unless_forced(session: Session) -> None:
+    with pytest.raises(ConfigurationError, match="refusing to seed"):
+        seed_users(session, environment="prod")
+    assert UserRepository(session).list() == []
+    with pytest.raises(ConfigurationError):
+        seed_all(session, environment="prod")
+    forced = seed_users(session, environment="prod", force=True)
+    assert len(forced) == len(DEV_USERS)
+    assert seed_users(session, environment="prod", force=True) == []  # still idempotent

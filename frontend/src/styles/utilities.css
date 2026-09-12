@@ -176,3 +176,26 @@
   height: 240px;
   min-width: 0;
 }
+
+.reason-list {
+  margin: 0;
+  padding-left: 16px;
+}
+.reason-list li {
+  white-space: normal;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.dq-headline {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.4;
+}

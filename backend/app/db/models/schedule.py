@@ -83,6 +83,10 @@ class ScheduleVersionRow(Base, TimestampMixin):
     unscheduled: Mapped[list[dict[str, Any]]] = mapped_column(JSONDict, nullable=False, default=list)
     warnings: Mapped[list[str]] = mapped_column(JSONDict, nullable=False, default=list)
     notes: Mapped[str | None] = mapped_column(Text)
+    #: Analytics computed with the version (executive KPIs, capacity, bottlenecks, data quality).
+    analytics: Mapped[dict[str, Any] | None] = mapped_column(JSONDict)
+    #: Free-form lifecycle details: trigger, previous version, writeback receipt, replan decision.
+    details: Mapped[dict[str, Any]] = mapped_column(JSONDict, nullable=False, default=dict)
 
     entries: Mapped[list[ScheduleEntryRow]] = relationship(
         back_populates="version",

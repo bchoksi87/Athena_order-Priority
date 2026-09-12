@@ -11,7 +11,7 @@ from app.core.errors import NotFoundError
 from app.core.ids import new_id
 from app.db.models import AlertRow
 from app.db.records import AlertRecord, Page
-from app.db.repositories.base import DEFAULT_PAGE_SIZE, Repository
+from app.db.repositories.base import DEFAULT_PAGE_SIZE, Repository, chunked
 from app.domain.enums import AlertSeverity, AlertType
 from app.domain.results import Alert
 
@@ -25,8 +25,27 @@ class AlertRepository(Repository):
         that re-occurs is re-activated (and un-acknowledged).
         """
         key = alert.dedupe_key or _default_dedupe_key(alert)
-        seen_at = now or alert.raised_at
         row = self._session.execute(select(AlertRow).where(AlertRow.dedupe_key == key)).scalar_one_or_none()
+        row = self._apply(alert, key, row, now)
+        self._flush()
+        return _record(row)
+
+    def upsert_many(self, alerts: Iterable[Alert], now: datetime | None = None) -> list[AlertRecord]:
+        """Bulk :meth:`upsert`: existing rows are loaded with chunked ``IN`` queries and flushed once."""
+        items = list(alerts)
+        keys = [a.dedupe_key or _default_dedupe_key(a) for a in items]
+        rows: dict[str, AlertRow] = {}
+        for batch in chunked(set(keys)):
+            stmt = select(AlertRow).where(AlertRow.dedupe_key.in_(batch))
+            for row in self._session.execute(stmt).scalars():
+                rows[row.dedupe_key] = row
+        for alert, key in zip(items, keys, strict=True):
+            rows[key] = self._apply(alert, key, rows.get(key), now)
+        self._flush()
+        return [_record(rows[key]) for key in keys]
+
+    def _apply(self, alert: Alert, key: str, row: AlertRow | None, now: datetime | None) -> AlertRow:
+        seen_at = now or alert.raised_at
         if row is None:
             row = AlertRow(alert_id=new_id("al"), dedupe_key=key, raised_at=alert.raised_at, occurrences=1)
             self._session.add(row)
@@ -47,11 +66,7 @@ class AlertRepository(Repository):
         row.machine_id = alert.machine_id
         row.entity_ref = alert.entity_ref
         row.details = dict(alert.details)
-        self._flush()
-        return _record(row)
-
-    def upsert_many(self, alerts: Iterable[Alert], now: datetime | None = None) -> list[AlertRecord]:
-        return [self.upsert(a, now) for a in alerts]
+        return row
 
     def resolve_missing(self, active_keys: Iterable[str], at: datetime) -> int:
         """Resolve active alerts whose dedupe key is not in ``active_keys`` (alert sweep)."""

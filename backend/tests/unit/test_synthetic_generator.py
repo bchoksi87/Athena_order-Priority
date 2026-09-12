@@ -10,6 +10,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.enums import MachineStatus, OperationStatus, OrderStatus, ProcessType
+from synthetic.calibration import measure_load
 from synthetic.catalog import DEFAULT_CALENDAR_ID, PRINTER_CALENDAR_ID, SCALES
 from synthetic.defects import DEFECT_KINDS
 from synthetic.generator import DEFAULT_AS_OF, SyntheticDataGenerator, SyntheticDataset
@@ -46,7 +47,7 @@ def test_small_scale_counts(small: SyntheticDataset) -> None:
     assert len(small.customers) == 80
     # duplicate-order defects add rows on top of the nominal volume
     assert profile.orders <= len(small.orders) <= profile.orders + profile.orders * 0.05
-    assert len(small.machines) == sum(profile.machines_per_group.values()) == 12
+    assert len(small.machines) == sum(profile.machines_per_group.values()) == 16
     assert len(small.materials) >= profile.materials
     assert len(small.tooling) == profile.tooling
     assert len(small.calendars) == 2
@@ -57,7 +58,7 @@ def test_medium_scale_counts() -> None:
     ds = SyntheticDataGenerator(seed=3, scale="medium").generate()
     assert len(ds.customers) == 800
     assert 5_000 <= len(ds.orders) <= 5_250
-    assert len(ds.machines) == 45
+    assert len(ds.machines) == 50
     assert len(ds.materials) == 33
     assert len(ds.tooling) == 40
     assert ds.stats.machines_down == 2
@@ -70,7 +71,7 @@ def test_large_scale_performance() -> None:
     ds = SyntheticDataGenerator(seed=5, scale="large").generate()
     assert time.perf_counter() - started < 20.0
     assert 20_000 <= len(ds.orders) <= 21_000
-    assert len(ds.machines) == 120
+    assert len(ds.machines) == 198
 
 
 def test_customer_tier_mix(small: SyntheticDataset) -> None:
@@ -87,8 +88,9 @@ def test_customer_tier_mix(small: SyntheticDataset) -> None:
 
 def test_stats_sanity_medium() -> None:
     stats = SyntheticDataGenerator(seed=42, scale="medium").generate().stats
-    assert 0.03 <= stats.overdue_share <= 0.08
-    assert 0.06 <= stats.due_today_or_tomorrow_share <= 0.14
+    assert 0.70 <= stats.open_orders / stats.orders <= 0.80  # mid-month: a quarter already shipped
+    assert 0.05 <= stats.overdue_share <= 0.10
+    assert 0.04 <= stats.due_today_or_tomorrow_share <= 0.12
     assert 0.02 <= stats.on_hold_share <= 0.06
     assert 0.01 <= stats.drawing_unapproved_share <= 0.04
     assert 0.015 <= stats.quality_hold_or_rework_share <= 0.05
@@ -110,7 +112,7 @@ def test_machines_are_realistic(small: SyntheticDataset) -> None:
     cncs = [m for m in small.machines if m.process_type == ProcessType.CNC_MACHINING]
     assert all(m.compatible_materials for m in cncs)
     down = [m for m in small.machines if m.status == MachineStatus.DOWN]
-    assert len(down) == 1 and down[0].unplanned_downtime
+    assert len(down) == 1 and down[0].unplanned_downtime and down[0].machine_id == "MC-CNC3-02"
     assert any(m.maintenance_windows for m in small.machines)
     assert all(m.efficiency > 0 for m in small.machines)
 
@@ -166,6 +168,73 @@ def test_orders_and_operations_are_consistent(small: SyntheticDataset) -> None:
     assert all(op.tooling_ids for op in cnc_first_ops)
     assert all(op.setup_family for op in cnc_first_ops)
     assert any(op.machine_cycle_minutes for op in cnc_first_ops)
+
+
+def test_routes_match_machine_material_compatibility(small: SyntheticDataset) -> None:
+    """Every operation's group has a machine qualified for the part's material (defects aside)."""
+    medium = SyntheticDataGenerator(seed=42, scale="medium").generate()
+    for ds in (small, medium):
+        snapshot = ds.to_snapshot()
+        checked = 0
+        for order in snapshot.open_orders():
+            if order.attributes.get("injected_defect") in ("unknown_material_ref", "missing_machine_group"):
+                continue
+            for op in snapshot.operations_for_order(order.order_id):
+                material_id = op.material_id or order.required_material_id
+                if material_id is None or op.machine_group is None:
+                    continue
+                assert material_id in snapshot.materials, (order.order_id, material_id)
+                machines = snapshot.machines_in_group(op.machine_group)
+                assert machines, (order.order_id, op.machine_group)
+                assert any(
+                    not m.compatible_materials or material_id in m.compatible_materials for m in machines
+                ), f"{order.order_id}: {material_id} cannot run in group {op.machine_group}"
+                if op.machine_id is not None:
+                    pinned = snapshot.machines[op.machine_id]
+                    assert not pinned.compatible_materials or material_id in pinned.compatible_materials
+                checked += 1
+        assert checked > 0
+    # titanium / Inconel turned parts land on lathes qualified for them, never on an unqualified group
+    lathe_ops = [op for op in medium.operations if op.machine_group == "LATHE" and op.material_id]
+    materials = {m.material_id: m for m in medium.materials}
+    assert any(materials[op.material_id].material_type in ("titanium", "superalloy") for op in lathe_ops)
+
+
+def test_plant_load_is_calibrated(small: SyntheticDataset) -> None:
+    """Busy but feasible: 70-115 % of the 30-day calendar hours, with a real bottleneck group."""
+    report = measure_load(small.to_snapshot(), window_days=30)
+    assert report.available_hours > 0 and report.required_hours > 0
+    assert 70.0 <= report.load_pct <= 115.0, f"plant load {report.load_pct:.1f}%"
+    busiest = max(report.groups.values(), key=lambda g: g.load_pct)
+    assert busiest.load_pct > report.load_pct
+    assert busiest.load_pct >= 95.0, (
+        f"no bottleneck group: busiest {busiest.group} at {busiest.load_pct:.0f}%"
+    )
+    assert all(g.load_pct <= 130.0 for g in report.groups.values()), "an impossible group load"
+    assert set(report.groups) == {m.machine_group for m in small.machines}
+
+
+def test_order_book_does_not_depend_on_plant_size() -> None:
+    """Order lines are drawn from their own stream: the plant can be resized without reshuffling them."""
+    import dataclasses
+
+    from synthetic import catalog
+
+    base = catalog.SCALES["small"]
+    a = SyntheticDataGenerator(seed=9, scale="small").generate()
+    bigger = {g: n + 1 for g, n in base.machines_per_group.items()}
+    catalog.SCALES["small"] = dataclasses.replace(base, machines_per_group=bigger)
+    try:
+        b = SyntheticDataGenerator(seed=9, scale="small").generate()
+    finally:
+        catalog.SCALES["small"] = base
+    key = [
+        (o.order_id, o.customer_id, o.part_family, o.quantity, o.order_status, o.due_date) for o in a.orders
+    ]
+    assert key == [
+        (o.order_id, o.customer_id, o.part_family, o.quantity, o.order_status, o.due_date) for o in b.orders
+    ]
+    assert len(b.machines) == len(a.machines) + len(bigger)
 
 
 def test_assembly_dependencies(small: SyntheticDataset) -> None:

@@ -6,7 +6,7 @@
  * - Every failure is normalised to ApiError {status, code, message, details}.
  * - 401 responses invoke `onUnauthorized` (the auth provider logs out).
  */
-import type { ErrorResponse, ListResponse, Paged } from "./types";
+import type { ErrorResponse, ListResponse, PageResponse, Paged } from "./types";
 
 export const DEFAULT_API_BASE_URL = "/api/v1";
 
@@ -204,16 +204,53 @@ export class ApiClient {
   }
 }
 
-/** Accepts either a bare array or a {items, meta} page and returns the items. */
+/** Accepts a bare array, a {items, meta} page or a page-number PageResponse and returns the items. */
 export function unwrapList<T>(res: ListResponse<T> | null | undefined): T[] {
   if (!res) return [];
   if (Array.isArray(res)) return res;
   return Array.isArray(res.items) ? res.items : [];
 }
 
-/** Normalises list responses to a page envelope (client-side paging for bare arrays). */
+function isPageResponse<T>(res: ListResponse<T>): res is PageResponse<T> {
+  return !Array.isArray(res) && typeof (res as PageResponse<T>).page === "number" && !("meta" in res);
+}
+
+/** Converts the API's page-number envelope {items,total,page,page_size,pages,has_more} to Paged<T>. */
+export function fromPageResponse<T>(res: PageResponse<T>): Paged<T> {
+  return {
+    items: res.items,
+    meta: {
+      total: res.total,
+      offset: (res.page - 1) * res.page_size,
+      limit: res.page_size,
+      has_more: res.has_more,
+      page: res.page,
+      pages: res.pages,
+    },
+  };
+}
+
+/** Normalises any list response to a page envelope (client-side paging for bare arrays). */
 export function toPaged<T>(res: ListResponse<T> | null | undefined): Paged<T> {
-  if (res && !Array.isArray(res) && res.meta) return res;
+  if (res && !Array.isArray(res)) {
+    if (isPageResponse(res)) return fromPageResponse(res);
+    if (res.meta) return res;
+  }
   const items = unwrapList(res);
   return { items, meta: { total: items.length, offset: 0, limit: items.length, has_more: false } };
+}
+
+/** Legacy paging options accepted by the hooks: page/page_size or offset/limit. */
+export interface PagingInput {
+  page?: number;
+  page_size?: number;
+  limit?: number;
+  offset?: number;
+}
+
+/** Resolves page/page_size from either paging style (page_size defaults to `defaultSize`). */
+export function resolvePaging(input: PagingInput, defaultSize = 50): { page: number; page_size: number } {
+  const page_size = input.page_size ?? input.limit ?? defaultSize;
+  const page = input.page ?? (input.offset !== undefined && page_size > 0 ? Math.floor(input.offset / page_size) + 1 : 1);
+  return { page: Math.max(1, page), page_size: Math.max(1, Math.min(500, page_size)) };
 }

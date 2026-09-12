@@ -7,7 +7,7 @@ Commands
 ``sync``            run the ERP synchronisation (mock connector by default)
 ``snapshot-stats``  build the planning snapshot from the database and print its summary
 ``create-user``     add a local user account
-``worker``          background worker (placeholder until the worker is implemented; exits 2)
+``worker``          background worker: APScheduler loop (sync / replan / alerts), or one job with ``--once``
 
 Every command reads :class:`~app.core.config.Settings` (``PPSE_*`` environment
 variables / ``.env``); ``--database-url`` overrides the database for one call.
@@ -57,7 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     migrate = sub.add_parser("migrate", help="apply database migrations")
     migrate.add_argument("--revision", default="head", help="target revision (default: head)")
 
-    sub.add_parser("seed", help="seed development users and the default configuration")
+    seed = sub.add_parser("seed", help="seed development users and the default configuration")
+    seed.add_argument(
+        "--force",
+        action="store_true",
+        help="create the well-known dev accounts even in prod (refused otherwise)",
+    )
 
     sync = sub.add_parser("sync", help="synchronise the local store from the ERP connector")
     sync.add_argument("--mode", choices=[m.value for m in SyncMode], default=SyncMode.FULL.value)
@@ -83,7 +88,16 @@ def build_parser() -> argparse.ArgumentParser:
     user.add_argument("--display-name", default=None)
     user.add_argument("--email", default=None)
 
-    sub.add_parser("worker", help="run the background worker (not yet implemented)")
+    worker = sub.add_parser("worker", help="run the background worker (APScheduler loop)")
+    worker.add_argument(
+        "--once",
+        choices=["sync", "replan", "alerts"],
+        default=None,
+        help="run one job and exit (exit 1 when the job fails)",
+    )
+    worker.add_argument(
+        "--poll-seconds", type=float, default=1.0, help="how often the loop checks for a stop signal"
+    )
     return parser
 
 
@@ -143,11 +157,11 @@ def cmd_migrate(ctx: CliContext, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_seed(ctx: CliContext, _args: argparse.Namespace) -> int:
+def cmd_seed(ctx: CliContext, args: argparse.Namespace) -> int:
     from app.db.seed import seed_default_config, seed_users
 
     with session_scope(create_session_factory(ctx.engine)) as session:
-        users = seed_users(session)
+        users = seed_users(session, environment=ctx.settings.environment, force=bool(args.force))
         config_seeded = seed_default_config(session)
     payload = {
         "command": "seed",
@@ -239,10 +253,26 @@ def cmd_create_user(ctx: CliContext, args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_worker(ctx: CliContext, _args: argparse.Namespace) -> int:
-    """Placeholder: the APScheduler-based worker (sync/replan intervals) is not wired yet."""
-    ctx.err.write("background worker not yet implemented\n")
-    return EXIT_USAGE
+def cmd_worker(ctx: CliContext, args: argparse.Namespace) -> int:
+    """``--once <job>`` runs one job against the configured database; otherwise block on the loop."""
+    from app.workers.jobs import JobContext, run_job
+    from app.workers.main import run_worker
+
+    factory = create_session_factory(ctx.engine)
+    if args.once:
+        context = JobContext(ctx.settings, factory, ctx.clock)
+        result = run_job(args.once, context)
+        summary = ", ".join(
+            f"{k}={v}" for k, v in result.summary.items() if isinstance(v, str | int | float | bool)
+        )
+        ctx.emit(
+            {"command": "worker", **result.to_dict()},
+            f"job {result.job} {result.status} in {result.duration_seconds:.2f}s"
+            + (f": {summary}" if summary else "")
+            + (f"\n  error: {result.error}" if result.error else ""),
+        )
+        return EXIT_OK if result.succeeded else EXIT_ERROR
+    return run_worker(ctx.settings, clock=ctx.clock, session_factory=factory, poll_seconds=args.poll_seconds)
 
 
 COMMANDS = {

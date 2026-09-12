@@ -31,9 +31,19 @@ def _seed_dev_data(app: FastAPI, settings: Settings) -> None:
 
     try:
         with session_scope(app.state.session_factory) as session:
-            seed_all(session)
+            seed_all(session, environment=settings.environment)
     except Exception as exc:  # seeding must never block start-up (e.g. migrations not applied yet)
         log.warning("seed_skipped", reason=str(exc))
+
+
+def _start_background_jobs(app: FastAPI, settings: Settings, clock: Clock) -> Any:
+    """In-process APScheduler loop (dev); a dedicated worker container runs it in prod."""
+    from app.workers.scheduler import build_scheduler, start_scheduler
+
+    scheduler = build_scheduler(settings, app.state.session_factory, clock)
+    start_scheduler(scheduler)
+    app.state.scheduler = scheduler
+    return scheduler
 
 
 def _build_lifespan(settings: Settings, engine: Engine | None, clock: Clock) -> Any:
@@ -53,10 +63,21 @@ def _build_lifespan(settings: Settings, engine: Engine | None, clock: Clock) -> 
         app.state.metrics = MetricsRegistry()
         if settings.is_dev and settings.seed_on_startup:
             _seed_dev_data(app, settings)
-        log.info("app_started", environment=settings.environment, version=settings.app_version)
+        scheduler = _start_background_jobs(app, settings, clock) if settings.background_jobs_enabled else None
+        app.state.scheduler = scheduler
+        log.info(
+            "app_started",
+            environment=settings.environment,
+            version=settings.app_version,
+            background_jobs=settings.background_jobs_enabled,
+        )
         try:
             yield
         finally:
+            if scheduler is not None:
+                from app.workers.scheduler import shutdown_scheduler
+
+                shutdown_scheduler(scheduler, wait=False)
             if owns_engine:
                 app_engine.dispose()
             log.info("app_stopped")

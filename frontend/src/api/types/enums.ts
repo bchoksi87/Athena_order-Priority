@@ -1,4 +1,4 @@
-/** String enums of the domain (backend/app/domain/enums.py). */
+/** String enums of the domain (backend/app/domain/enums.py, mirrored in the OpenAPI document). */
 
 // ---------------------------------------------------------------- enums
 
@@ -73,6 +73,9 @@ export type OverrideType =
   | "move_order"
   | "lock_machine_assignment";
 
+/** `type` field of POST /orders/{id}/override-priority. */
+export type OverridePriorityKind = "increase" | "decrease" | "set";
+
 export type AlertSeverity = "info" | "warning" | "high" | "critical";
 
 export type AlertType =
@@ -114,3 +117,20 @@ export type SyncMode = "full" | "incremental";
 
 export type FactorKind = "bonus" | "penalty";
 export type AdjustmentKind = "aging" | "fairness" | "expedite" | "override" | "customer_rule" | "erp_priority";
+
+/** Priority factor keys accepted by FactorWeight.key (app/domain/config.py FactorKey). */
+export type FactorKey =
+  | "due_date_urgency"
+  | "sla_risk"
+  | "customer_importance"
+  | "order_value"
+  | "margin"
+  | "delay_penalty"
+  | "production_readiness"
+  | "machine_availability"
+  | "setup_efficiency"
+  | "batching_affinity"
+  | "downstream_impact";
+
+/** Kind of an explanation line (ExplanationLine.kind). */
+export type ExplanationLineKind = "factor" | "adjustment" | "cap";

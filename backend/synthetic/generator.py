@@ -6,8 +6,55 @@ Usage::
     snapshot = dataset.to_snapshot()
 
 The same ``seed``/``scale``/``as_of`` always yields an identical dataset. All
-randomness flows through one ``random.Random`` instance; nothing touches the
-global random state or the wall clock.
+randomness flows through ``random.Random`` instances derived from the seed
+(one stream per stage: master data, order book, machine picks, defects);
+nothing touches the global random state or the wall clock.
+
+Capacity calibration
+--------------------
+The plant is sized so that the open order book is *busy but feasible*: over
+the next 30 days it needs roughly 80-90 % of the machine-hours the calendars
+offer, one or two groups (the 5-axis cell, the CMM room) sit at 100-115 %
+and every other group at 60-95 %. :func:`synthetic.calibration.measure_load`
+is the yardstick and ``tests/unit/test_synthetic_generator.py`` guards it.
+
+How the numbers hang together (medium scale, seed 42):
+
+* 5,000 order lines a month, 800 customers; a mid-month snapshot, so ~25 % of
+  the lines are already completed/packed/shipped (history for the OTD
+  screens) and ~3,800 are open. Every open line carries 3-6 routed
+  operations, ~15,000 pending in total, ~15,000 machine-hours of work.
+* Work content per line is job-shop sized: CNC 20-90 min setup plus
+  2-32 min/piece (5-axis parts x1.25), printing 15-45 min setup plus
+  10-90 min/piece, both discounted by ``1 / (1 + log10(lot))``; the
+  downstream steps (deburr, sample CMM inspection, anodising, assembly,
+  packing) are minutes per piece on top of a batch setup. Lots are
+  log-normal (CNC median ~12, printed parts median ~6, capped at one build
+  plate); the small scale multiplies lots by ``ScaleProfile.lot_multiplier``
+  because a 16-machine shop with 300 lines a month runs fewer, larger lots.
+* 50 machines on medium (12 three-axis VMCs, 4 five-axis, 5 lathes, 8
+  printers, 5 deburr stations, 5 CMMs, 3 anodising lines, 3 AM post cells,
+  2 assembly benches, 3 packing stations) run two shifts on weekdays
+  (printers three shifts, six days) -> ~18,800 machine-hours in 30 days.
+  Large is medium x4 (~200 machines for 20,000 lines).
+* Due dates correlate with status (unreleased work is due weeks out, work on
+  the floor and blocked work is due soon or already late), which puts ~6 %
+  of the open book overdue and ~7 % due today/tomorrow.
+* Routes are consistent with the plant: a part is only sent to a machine
+  group with at least one machine qualified for its material (titanium and
+  Inconel shafts go to the lathes, which are qualified for them; brass or
+  plastic impellers fall back from the 5-axis cell to a 3-axis VMC), and
+  ``MATERIAL_WAITING`` lines swap in an out-of-stock material of their own
+  class. Only the injected data-quality defects (``dq_defect_ratio``) break
+  referential integrity, deliberately.
+
+Why not fuller: the rule-based scheduler places every schedulable order in
+priority order, and a 14-day horizon holds only ~48 % of 30 days of
+capacity, so at 85 % load roughly 40 % of the entries necessarily start
+beyond the horizon and the projected on-time share of the default priority
+profile (customer tier and value outrank due-date urgency for mid-range due
+dates) settles around 55 %. Adding ~30 % more machines lifts it to ~70 % at
+the cost of a plant running at ~65 %; the load band was kept.
 """
 
 from __future__ import annotations
@@ -173,18 +220,24 @@ class SyntheticDataGenerator:
 
     def generate(self) -> SyntheticDataset:
         started = time.perf_counter()
-        rng = random.Random(self._seed)
+        # Independent streams per stage (all derived from the seed): changing the
+        # plant (e.g. one machine more) does not reshuffle the order book.
+        master_rng = random.Random(f"{self._seed}:masters")
+        order_rng = random.Random(f"{self._seed}:orders")
+        machine_pick_rng = random.Random(f"{self._seed}:machine-picks")
+        defect_rng = random.Random(f"{self._seed}:defects")
         profile = self._profile
         as_of = self._as_of
         log.info("synthetic.generate.start", seed=self._seed, scale=self._scale, as_of=as_of.isoformat())
 
-        customers = build_customers(rng, profile)
-        materials = build_materials(rng, profile, as_of)
-        machines = build_machines(rng, profile, as_of, materials)
-        tooling = build_tooling(rng, profile, machines)
+        customers = build_customers(master_rng, profile)
+        materials = build_materials(master_rng, profile, as_of)
+        machines = build_machines(master_rng, profile, as_of, materials)
+        tooling = build_tooling(master_rng, profile, machines)
         calendars = build_calendars()
         ctx = OrderBuildContext(
-            rng=rng,
+            rng=order_rng,
+            machine_rng=machine_pick_rng,
             as_of=as_of,
             profile=profile,
             customers=customers,
@@ -193,7 +246,7 @@ class SyntheticDataGenerator:
             tooling=tooling,
         )
         orders, operations = OrderFactory(ctx).build()
-        defects = inject_defects(rng, orders, operations, self._dq_defect_ratio)
+        defects = inject_defects(defect_rng, orders, operations, self._dq_defect_ratio)
 
         stats = self._compute_stats(
             customers,

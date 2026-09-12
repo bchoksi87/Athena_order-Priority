@@ -1,3 +1,4 @@
+/** Operational endpoints: /health, /metrics and the (contract §9) ERP sync endpoints. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { ApiClient } from "./client";
@@ -14,11 +15,13 @@ export function fetchMetrics(client: ApiClient): Promise<Record<string, unknown>
   return client.get<Record<string, unknown>>("/metrics");
 }
 
+/** GET /sync/runs — not yet exposed by the backend; callers must treat a 404 as "unavailable". */
 export async function fetchSyncRuns(client: ApiClient): Promise<SyncRun[]> {
   const res = await client.get<ListResponse<SyncRun>>("/sync/runs");
   return unwrapList(res);
 }
 
+/** POST /sync/run — not yet exposed by the backend (contract §9). */
 export function runSync(client: ApiClient, mode: SyncMode): Promise<SyncRun> {
   return client.post<SyncRun>("/sync/run", { mode });
 }
@@ -33,9 +36,19 @@ export function useHealth(refetchIntervalMs = 30_000) {
   });
 }
 
-export function useSyncRuns() {
+export function useMetrics(refetchIntervalMs: number | false = 30_000) {
   const client = useApiClient();
-  return useQuery({ queryKey: queryKeys.system.syncRuns, queryFn: () => fetchSyncRuns(client) });
+  return useQuery({
+    queryKey: queryKeys.system.metrics,
+    queryFn: () => fetchMetrics(client),
+    refetchInterval: refetchIntervalMs,
+    retry: false,
+  });
+}
+
+export function useSyncRuns(enabled = true) {
+  const client = useApiClient();
+  return useQuery({ queryKey: queryKeys.system.syncRuns, queryFn: () => fetchSyncRuns(client), enabled, retry: false });
 }
 
 export function useRunSync() {

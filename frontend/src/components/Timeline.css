@@ -57,3 +57,12 @@
   fill: var(--fg-faint);
   font-size: 11px;
 }
+
+.timeline-grid-major {
+  stroke: var(--gantt-grid-major);
+}
+.timeline-day {
+  font-weight: 600;
+  fill: var(--fg-muted);
+  font-size: 10px;
+}

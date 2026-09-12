@@ -39,6 +39,19 @@ export interface DataTableProps<T> {
   /** Server-side total, when the rows are one page of a larger set. */
   totalCount?: number;
   footer?: ReactNode;
+  /** Controlled sort state (server-side sorting): the table stops sorting client-side and reports clicks. */
+  sort?: { key: string; direction: SortDirection } | null;
+  onSortChange?: (sort: { key: string; direction: SortDirection } | null) => void;
+  /** Disable client-side paging (rows are already one server page). */
+  paginate?: boolean;
+  /** Keys of columns to hide (column picker). */
+  hiddenColumns?: readonly string[];
+  /** Hide the footer row entirely (when a Pager is rendered outside). */
+  hideFooter?: boolean;
+  /** Called with the row and the keyboard event when Enter/Space is pressed on a focused row. */
+  keyboardNavigation?: boolean;
+  /** Extra attributes for the table element (e.g. aria-label). */
+  ariaLabel?: string;
 }
 
 function compare(a: SortValue, b: SortValue): number {
@@ -55,7 +68,7 @@ function compare(a: SortValue, b: SortValue): number {
  */
 export function DataTable<T>({
   rows,
-  columns,
+  columns: allColumns,
   rowKey,
   onRowClick,
   selectedKey,
@@ -68,10 +81,23 @@ export function DataTable<T>({
   maxHeight,
   totalCount,
   footer,
+  sort: controlledSort,
+  onSortChange,
+  paginate = true,
+  hiddenColumns,
+  hideFooter = false,
+  keyboardNavigation = true,
+  ariaLabel,
 }: DataTableProps<T>) {
-  const [sort, setSort] = useState<{ key: string; direction: SortDirection } | null>(initialSort ?? null);
+  const [localSort, setLocalSort] = useState<{ key: string; direction: SortDirection } | null>(initialSort ?? null);
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [page, setPage] = useState(0);
+  const serverSort = onSortChange !== undefined;
+  const sort = serverSort ? (controlledSort ?? null) : localSort;
+  const columns = useMemo(
+    () => (hiddenColumns && hiddenColumns.length > 0 ? allColumns.filter((c) => !hiddenColumns.includes(c.key)) : allColumns),
+    [allColumns, hiddenColumns],
+  );
 
   const filtered = useMemo(() => {
     const active = Object.entries(filterValues).filter(([, v]) => v.trim() !== "");
@@ -86,25 +112,32 @@ export function DataTable<T>({
   }, [rows, columns, filterValues]);
 
   const sorted = useMemo(() => {
-    if (!sort) return filtered;
+    if (!sort || serverSort) return filtered;
     const col = columns.find((c) => c.key === sort.key);
     if (!col?.sortValue) return filtered;
     const getter = col.sortValue;
     const dir = sort.direction === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => compare(getter(a), getter(b)) * dir);
-  }, [filtered, sort, columns]);
+  }, [filtered, sort, columns, serverSort]);
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const effectivePageSize = paginate ? pageSize : Math.max(1, sorted.length);
+  const pageCount = Math.max(1, Math.ceil(sorted.length / effectivePageSize));
   const currentPage = Math.min(page, pageCount - 1);
-  const visible = sorted.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const visible = paginate ? sorted.slice(currentPage * effectivePageSize, (currentPage + 1) * effectivePageSize) : sorted;
+
+  const nextSort = (prev: { key: string; direction: SortDirection } | null, col: Column<T>) => {
+    if (!prev || prev.key !== col.key) return { key: col.key, direction: "asc" as const };
+    if (prev.direction === "asc") return { key: col.key, direction: "desc" as const };
+    return null;
+  };
 
   const toggleSort = (col: Column<T>) => {
     if (!col.sortValue) return;
-    setSort((prev) => {
-      if (!prev || prev.key !== col.key) return { key: col.key, direction: "asc" };
-      if (prev.direction === "asc") return { key: col.key, direction: "desc" };
-      return null;
-    });
+    if (serverSort) {
+      onSortChange?.(nextSort(sort, col));
+    } else {
+      setLocalSort((prev) => nextSort(prev, col));
+    }
     setPage(0);
   };
 
@@ -113,7 +146,7 @@ export function DataTable<T>({
   return (
     <div className={`dt${dense ? " dt-dense" : ""}`} data-testid="datatable">
       <div className="dt-scroll" style={maxHeight ? { maxHeight } : undefined}>
-        <table>
+        <table aria-label={ariaLabel}>
           <thead>
             <tr>
               {columns.map((col) => (
@@ -169,6 +202,23 @@ export function DataTable<T>({
                     key={key}
                     className={cls || undefined}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
+                    onKeyDown={
+                      onRowClick && keyboardNavigation
+                        ? (e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onRowClick(row);
+                            } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                              e.preventDefault();
+                              const sibling = e.key === "ArrowDown" ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling;
+                              if (sibling instanceof HTMLElement) sibling.focus();
+                            }
+                          }
+                        : undefined
+                    }
+                    tabIndex={onRowClick && keyboardNavigation ? 0 : undefined}
+                    aria-selected={selectedKey === key ? true : undefined}
                     data-rowkey={key}
                   >
                     {columns.map((col) => (
@@ -183,13 +233,14 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
+      {hideFooter ? null : (
       <div className="dt-footer">
         <span>
           {sorted.length === rows.length ? `${rows.length} rows` : `${sorted.length} of ${rows.length} rows`}
           {totalCount !== undefined && totalCount > rows.length ? ` (${totalCount} total on server)` : ""}
         </span>
         {footer}
-        {pageCount > 1 ? (
+        {paginate && pageCount > 1 ? (
           <div className="dt-pager">
             <button type="button" className="btn btn-sm" onClick={() => setPage(0)} disabled={currentPage === 0}>
               «
@@ -214,6 +265,7 @@ export function DataTable<T>({
           </div>
         ) : null}
       </div>
+      )}
     </div>
   );
 }

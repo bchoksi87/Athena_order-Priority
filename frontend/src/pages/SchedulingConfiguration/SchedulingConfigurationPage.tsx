@@ -1,172 +1,266 @@
+/**
+ * Scheduling Configuration: the scheduling, replanning, alert and data-quality rule sets
+ * (each saved as its own version with a mandatory reason), plus versions with activate/rollback.
+ */
 import { useMemo, useState } from "react";
 
 import { describeError } from "@/api/client";
-import { useSaveSchedulingConfig, useSchedulingConfig } from "@/api/config";
-import type { BatchDimension, SchedulingConfig } from "@/api/types";
+import { fetchSchedulingConfigVersion, useActivateSchedulingConfigVersion, useSaveSchedulingConfiguration, useSchedulingConfigVersions, useSchedulingConfiguration } from "@/api/config";
+import type { AlertConfig, DataQualityConfig, ReplanningConfig, SchedulingConfig, SchedulingConfigUpdateRequest, SystemConfig } from "@/api/types";
 import { useAuth } from "@/app/auth";
+import { ActionDialog } from "@/components/ActionDialog";
 import { AsyncContent } from "@/components/AsyncContent";
+import { SelectField, TextField } from "@/components/Field";
 import { PageHeader } from "@/components/PageHeader";
+import { SchemaForm } from "@/components/SchemaForm";
 import { Section } from "@/components/Section";
+import { Tabs } from "@/components/Tabs";
 import { useToast } from "@/components/Toast";
+import { ALERTS_SECTION, DATA_QUALITY_SECTION, REPLANNING_SECTION, SCHEDULING_SECTIONS } from "@/lib/configSchema";
+import { diffJson } from "@/lib/diff";
 import { formatPct } from "@/lib/formatters";
 
-const BATCH_DIMENSIONS: BatchDimension[] = ["material", "machine", "tool", "fixture", "process", "part_family", "customer", "surface_finish", "technology"];
+import { ConfigVersionsPanel } from "../shared/ConfigVersionsPanel";
 
-function Num({ label, value, onChange, step = 1, disabled, hint }: { label: string; value: number | null; onChange: (v: number | null) => void; step?: number; disabled?: boolean; hint?: string }) {
-  return (
-    <label className="field">
-      <span className="label">{label}</span>
-      <input className="input num" type="number" step={step} value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />
-      {hint ? <span className="text-faint text-xs">{hint}</span> : null}
-    </label>
-  );
+type SectionKey = "scheduling" | "replanning" | "alerts" | "data_quality";
+
+interface Drafts {
+  scheduling: SchedulingConfig | null;
+  replanning: ReplanningConfig | null;
+  alerts: AlertConfig | null;
+  data_quality: DataQualityConfig | null;
 }
 
-function Check({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <label className="row text-sm">
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      {label}
-    </label>
-  );
-}
+const SECTION_LABELS: Record<SectionKey, string> = { scheduling: "Scheduling", replanning: "Replanning", alerts: "Alerts", data_quality: "Data quality" };
 
-/** Scheduling configuration editor (horizon, locking, stability, setup, batching, objectives, overtime). */
+/** Keys of SchedulingConfig edited by the "general" card (everything that is not a nested rule set). */
+const GENERAL_KEYS = ["horizon_days", "lock_window_minutes", "at_risk_slack_hours", "schedule_blocked_orders", "max_orders_per_run"] as const;
+
 export default function SchedulingConfigurationPage() {
   const { hasMinRole } = useAuth();
   const toast = useToast();
   const canEdit = hasMinRole("admin");
-  const query = useSchedulingConfig();
-  const save = useSaveSchedulingConfig();
-  // Local edits overlay the server configuration; null means "no unsaved changes".
-  const [edits, setEdits] = useState<SchedulingConfig | null>(null);
-  const draft = edits ?? query.data ?? null;
-  const dirty = edits !== null && JSON.stringify(edits) !== JSON.stringify(query.data);
-  const objectiveTotal = useMemo(() => (draft ? Object.values(draft.objectives).reduce((s, v) => s + v, 0) : 0), [draft]);
-  const patch = <K extends keyof SchedulingConfig>(key: K, value: SchedulingConfig[K]) => setEdits(draft ? { ...draft, [key]: value } : null);
+  const query = useSchedulingConfiguration();
+  const versions = useSchedulingConfigVersions();
+  const save = useSaveSchedulingConfiguration();
+  const activate = useActivateSchedulingConfigVersion();
+  const [drafts, setDrafts] = useState<Drafts>({ scheduling: null, replanning: null, alerts: null, data_quality: null });
+  const [tab, setTab] = useState<SectionKey>("scheduling");
+  const [saveOpen, setSaveOpen] = useState(false);
 
-  const onSave = async () => {
-    if (!draft) return;
+  const active = query.data ?? null;
+  const scheduling = drafts.scheduling ?? active?.scheduling ?? null;
+  const replanning = drafts.replanning ?? active?.replanning ?? null;
+  const alerts = drafts.alerts ?? active?.alerts ?? null;
+  const dataQuality = drafts.data_quality ?? active?.data_quality ?? null;
+
+  const dirtySections = useMemo(() => {
+    if (!active) return [] as SectionKey[];
+    const out: SectionKey[] = [];
+    if (drafts.scheduling && diffJson(active.scheduling, drafts.scheduling).length > 0) out.push("scheduling");
+    if (drafts.replanning && diffJson(active.replanning, drafts.replanning).length > 0) out.push("replanning");
+    if (drafts.alerts && diffJson(active.alerts, drafts.alerts).length > 0) out.push("alerts");
+    if (drafts.data_quality && diffJson(active.data_quality, drafts.data_quality).length > 0) out.push("data_quality");
+    return out;
+  }, [active, drafts]);
+  const dirty = dirtySections.length > 0;
+
+  const patchScheduling = (patch: Partial<SchedulingConfig>) => scheduling && setDrafts((d) => ({ ...d, scheduling: { ...scheduling, ...patch } }));
+
+  const objectiveTotal = scheduling ? Object.values(scheduling.objectives).reduce((s, v) => s + v, 0) : 0;
+
+  const onSave = async (reason: string) => {
+    if (!active) return;
+    const body: SchedulingConfigUpdateRequest = { reason };
+    if (dirtySections.includes("scheduling") && drafts.scheduling) body.scheduling = drafts.scheduling;
+    if (dirtySections.includes("replanning") && drafts.replanning) body.replanning = drafts.replanning;
+    if (dirtySections.includes("alerts") && drafts.alerts) body.alerts = drafts.alerts;
+    if (dirtySections.includes("data_quality") && drafts.data_quality) body.data_quality = drafts.data_quality;
     try {
-      const saved = await save.mutateAsync(draft);
-      setEdits(null);
-      toast.push({ tone: "success", title: `Configuration saved as v${saved.version}` });
+      const res = await save.mutateAsync(body);
+      setDrafts({ scheduling: null, replanning: null, alerts: null, data_quality: null });
+      setSaveOpen(false);
+      toast.push({ tone: "success", title: `Configuration saved as v${res.version.version}`, message: `${dirtySections.map((s) => SECTION_LABELS[s]).join(", ")} updated · ${Object.keys(res.changed_new).length} field(s) changed.` });
     } catch (err) {
       toast.push({ tone: "error", title: "Save failed", message: describeError(err) });
     }
   };
 
+  const onActivate = async (version: number, reason: string) => {
+    try {
+      const res = await activate.mutateAsync({ version, reason });
+      setDrafts({ scheduling: null, replanning: null, alerts: null, data_quality: null });
+      toast.push({ tone: "success", title: `Activated v${res.version.version}` });
+    } catch (err) {
+      toast.push({ tone: "error", title: "Activate failed", message: describeError(err) });
+      throw err;
+    }
+  };
+
   return (
-    <div className="page">
+    <div className="page" data-testid="scheduling-configuration-page">
       <PageHeader
         eyebrow="Configure"
         title="Scheduling Configuration"
-        subtitle={draft ? `${draft.config_id} · ${draft.name} · v${draft.version} · algorithm ${draft.algorithm}${dirty ? " · unsaved changes" : ""}` : "Horizon, locking, stability, setup, batching and objectives"}
+        subtitle={
+          scheduling ? (
+            <span className="row row-wrap">
+              <span>
+                <span className="mono">{scheduling.config_id}</span> · {scheduling.name} · v{scheduling.version} · algorithm <span className="mono">{scheduling.algorithm}</span>
+              </span>
+              {active?.version ? <span className="text-faint">active config v{active.version.version}</span> : null}
+              {dirty ? <span className="pill pill-at-risk pill-sm">UNSAVED: {dirtySections.map((s) => SECTION_LABELS[s]).join(", ")}</span> : null}
+              {!canEdit ? <span className="pill pill-neutral pill-sm">READ ONLY · admin saves</span> : null}
+            </span>
+          ) : (
+            "Horizon, locking, stability, setup, batching, objectives, overtime, replanning, alerts and data quality rules"
+          )
+        }
         actions={
           <>
-            <button type="button" className="btn" onClick={() => setEdits(null)} disabled={!dirty}>
+            <button type="button" className="btn" onClick={() => setDrafts({ scheduling: null, replanning: null, alerts: null, data_quality: null })} disabled={!dirty}>
               Discard
             </button>
             {canEdit ? (
-              <button type="button" className="btn btn-primary" onClick={() => void onSave()} disabled={!dirty || save.isPending}>
+              <button type="button" className="btn btn-primary" onClick={() => setSaveOpen(true)} disabled={!dirty || save.isPending}>
                 {save.isPending ? "Saving…" : "Save new version"}
               </button>
-            ) : (
-              <span className="badge">read only · admin edits</span>
-            )}
+            ) : null}
           </>
         }
       />
+
       <AsyncContent query={query} loadingLabel="Loading configuration">
         {() =>
-          draft ? (
-            <div className="grid grid-3">
-              <Section title="Horizon & locking">
-                <div className="col gap-1">
-                  <label className="field">
-                    <span className="label">Name</span>
-                    <input className="input" value={draft.name} disabled={!canEdit} onChange={(e) => patch("name", e.target.value)} />
-                  </label>
-                  <label className="field">
-                    <span className="label">Algorithm</span>
-                    <select className="select" value={draft.algorithm} disabled={!canEdit} onChange={(e) => patch("algorithm", e.target.value)}>
-                      <option value="rule_based">rule_based (V1)</option>
-                      <option value="cpsat">cpsat (V2, optional)</option>
-                    </select>
-                  </label>
-                  <Num label="Horizon (days)" value={draft.horizon_days} disabled={!canEdit} onChange={(v) => patch("horizon_days", v ?? 0)} />
-                  <Num label="Lock window (minutes)" value={draft.lock_window_minutes} disabled={!canEdit} onChange={(v) => patch("lock_window_minutes", v ?? 0)} hint="Entries starting within this window stay fixed" />
-                  <Num label="At-risk slack (hours)" value={draft.at_risk_slack_hours} disabled={!canEdit} onChange={(v) => patch("at_risk_slack_hours", v ?? 0)} />
-                  <Num label="Max orders per run" value={draft.max_orders_per_run} disabled={!canEdit} onChange={(v) => patch("max_orders_per_run", v)} hint="blank = all" />
-                  <Check label="Schedule blocked orders after their blocker clears" checked={draft.schedule_blocked_orders} disabled={!canEdit} onChange={(v) => patch("schedule_blocked_orders", v)} />
-                </div>
-              </Section>
-              <Section title="Stability & setup">
-                <div className="col gap-1">
-                  <Num label="Frozen window (minutes)" value={draft.stability.frozen_window_minutes} disabled={!canEdit} onChange={(v) => patch("stability", { ...draft.stability, frozen_window_minutes: v ?? 0 })} />
-                  <Num label="Min improvement to replan (%)" value={draft.stability.min_improvement_pct} step={0.5} disabled={!canEdit} onChange={(v) => patch("stability", { ...draft.stability, min_improvement_pct: v ?? 0 })} />
-                  <Num label="Max moves per replan" value={draft.stability.max_moves_per_replan} disabled={!canEdit} onChange={(v) => patch("stability", { ...draft.stability, max_moves_per_replan: v })} hint="blank = unlimited" />
-                  <div className="divider" />
-                  <Num label="Same-family setup factor" value={draft.setup.same_family_setup_factor} step={0.1} disabled={!canEdit} onChange={(v) => patch("setup", { ...draft.setup, same_family_setup_factor: v ?? 0 })} />
-                  <Num label="Same-material setup factor" value={draft.setup.same_material_setup_factor} step={0.1} disabled={!canEdit} onChange={(v) => patch("setup", { ...draft.setup, same_material_setup_factor: v ?? 0 })} />
-                  <Num label="Default setup (minutes)" value={draft.setup.default_setup_minutes} disabled={!canEdit} onChange={(v) => patch("setup", { ...draft.setup, default_setup_minutes: v ?? 0 })} />
-                  <Num label="Setup penalty cost / minute" value={draft.setup.setup_penalty_cost_per_minute} step={0.1} disabled={!canEdit} onChange={(v) => patch("setup", { ...draft.setup, setup_penalty_cost_per_minute: v ?? 0 })} />
-                </div>
-              </Section>
-              <Section title="Batching">
-                <div className="col gap-1">
-                  <Check label="Batching enabled" checked={draft.batching.enabled} disabled={!canEdit} onChange={(v) => patch("batching", { ...draft.batching, enabled: v })} />
-                  <span className="label">Dimensions</span>
-                  <div className="row row-wrap gap-1">
-                    {BATCH_DIMENSIONS.map((dim) => {
-                      const on = draft.batching.dimensions.includes(dim);
+          scheduling && replanning && alerts && dataQuality ? (
+            <div className="grid grid-main-side">
+              <div className="col gap-3">
+                <Tabs<SectionKey>
+                  items={(Object.keys(SECTION_LABELS) as SectionKey[]).map((k) => ({ key: k, label: `${SECTION_LABELS[k]}${dirtySections.includes(k) ? " •" : ""}` }))}
+                  value={tab}
+                  onChange={setTab}
+                  ariaLabel="Configuration sections"
+                />
+
+                {tab === "scheduling" ? (
+                  <div className="grid grid-2">
+                    <Section title="Identity">
+                      <div className="col gap-1">
+                        <TextField label="Name" value={scheduling.name} disabled={!canEdit} onChange={(v) => patchScheduling({ name: v })} />
+                        <SelectField
+                          label="Algorithm"
+                          value={scheduling.algorithm}
+                          disabled={!canEdit}
+                          options={[
+                            { value: "rule_based", label: "rule_based — deterministic priority-driven list scheduler (V1)" },
+                            { value: "cpsat", label: "cpsat — constraint optimisation (V2, when installed)" },
+                          ]}
+                          onChange={(v) => patchScheduling({ algorithm: v })}
+                          help="Which scheduler the planning pipeline runs; the rule-based scheduler is always available."
+                        />
+                        <dl className="kv mt-2">
+                          <dt>Config id</dt>
+                          <dd className="mono">{scheduling.config_id}</dd>
+                          <dt>Version</dt>
+                          <dd className="num">{scheduling.version}</dd>
+                        </dl>
+                      </div>
+                    </Section>
+                    {SCHEDULING_SECTIONS.map((section) => {
+                      const isGeneral = section.key === "general";
+                      const isQuality = section.key === "quality_weights";
+                      const value: Record<string, unknown> = isGeneral
+                        ? Object.fromEntries(GENERAL_KEYS.map((k) => [k, scheduling[k]]))
+                        : isQuality
+                          ? { quality_weights: scheduling.quality_weights }
+                          : (scheduling[section.key as keyof SchedulingConfig] as Record<string, unknown>);
                       return (
-                        <button key={dim} type="button" className={`chip${on ? " active" : ""}`} disabled={!canEdit} onClick={() => patch("batching", { ...draft.batching, dimensions: on ? draft.batching.dimensions.filter((d) => d !== dim) : [...draft.batching.dimensions, dim] })}>
-                          {dim}
-                        </button>
+                        <Section key={section.key} title={section.title} count={section.key === "objectives" ? `sum ${objectiveTotal.toFixed(0)}` : undefined}>
+                          {section.description ? <p className="text-muted text-xs">{section.description}</p> : null}
+                          <SchemaForm
+                            schema={section}
+                            value={value}
+                            disabled={!canEdit}
+                            onChange={(next) => {
+                              if (isGeneral || isQuality) patchScheduling(next as Partial<SchedulingConfig>);
+                              else patchScheduling({ [section.key]: next } as Partial<SchedulingConfig>);
+                            }}
+                          />
+                          {section.key === "objectives" ? (
+                            <div className="text-xs text-muted mt-2">
+                              Normalised: {(Object.keys(scheduling.objectives) as Array<keyof SchedulingConfig["objectives"]>).map((k) => `${k.replace(/_/g, " ")} ${objectiveTotal > 0 ? formatPct((100 * scheduling.objectives[k]) / objectiveTotal, 0) : "—"}`).join(" · ")}
+                            </div>
+                          ) : null}
+                        </Section>
                       );
                     })}
                   </div>
-                  <Num label="Max delay to batch (hours)" value={draft.batching.max_delay_hours} step={0.5} disabled={!canEdit} onChange={(v) => patch("batching", { ...draft.batching, max_delay_hours: v ?? 0 })} />
-                  <Num label="Min priority gap" value={draft.batching.min_priority_gap} disabled={!canEdit} onChange={(v) => patch("batching", { ...draft.batching, min_priority_gap: v ?? 0 })} />
-                </div>
-              </Section>
-              <Section title="Objectives" count={`sum ${objectiveTotal.toFixed(0)}`}>
-                <div className="col gap-1">
-                  {(Object.keys(draft.objectives) as Array<keyof SchedulingConfig["objectives"]>).map((k) => (
-                    <div className="row" key={k}>
-                      <span className="text-sm" style={{ width: 150 }}>
-                        {k.replace(/_/g, " ")}
-                      </span>
-                      <input type="range" min={0} max={100} value={draft.objectives[k]} disabled={!canEdit} onChange={(e) => patch("objectives", { ...draft.objectives, [k]: Number(e.target.value) })} style={{ flex: 1 }} aria-label={k} />
-                      <span className="num text-sm" style={{ width: 64, textAlign: "right" }}>
-                        {objectiveTotal > 0 ? formatPct((100 * draft.objectives[k]) / objectiveTotal, 0) : "—"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Section>
-              <Section title="Overtime & machine preference">
-                <div className="col gap-1">
-                  <Check label="Allow overtime" checked={draft.overtime.allow_overtime} disabled={!canEdit} onChange={(v) => patch("overtime", { ...draft.overtime, allow_overtime: v })} />
-                  <Num label="Max overtime hours / day" value={draft.overtime.max_overtime_hours_per_day} step={0.5} disabled={!canEdit} onChange={(v) => patch("overtime", { ...draft.overtime, max_overtime_hours_per_day: v ?? 0 })} />
-                  <Num label="Overtime cost / hour" value={draft.overtime.overtime_cost_per_hour} disabled={!canEdit} onChange={(v) => patch("overtime", { ...draft.overtime, overtime_cost_per_hour: v ?? 0 })} />
-                  <div className="divider" />
-                  <Num label="Non-preferred machine cost (min)" value={draft.machine_preference.non_preferred_machine_cost_minutes} disabled={!canEdit} onChange={(v) => patch("machine_preference", { ...draft.machine_preference, non_preferred_machine_cost_minutes: v ?? 0 })} />
-                  <Num label="Utilisation balance cost / %" value={draft.machine_preference.utilization_balance_cost_per_pct} step={0.1} disabled={!canEdit} onChange={(v) => patch("machine_preference", { ...draft.machine_preference, utilization_balance_cost_per_pct: v ?? 0 })} />
-                </div>
-              </Section>
-              <Section title="Quality weights">
-                <div className="col gap-1">
-                  {Object.entries(draft.quality_weights).map(([k, v]) => (
-                    <Num key={k} label={k.replace(/_/g, " ")} value={v} disabled={!canEdit} onChange={(nv) => patch("quality_weights", { ...draft.quality_weights, [k]: nv ?? 0 })} />
-                  ))}
-                </div>
-              </Section>
+                ) : null}
+
+                {tab === "replanning" ? (
+                  <Section title={REPLANNING_SECTION.title}>
+                    <p className="text-muted text-sm">{REPLANNING_SECTION.description}</p>
+                    <SchemaForm schema={REPLANNING_SECTION} value={replanning as unknown as Record<string, unknown>} disabled={!canEdit} onChange={(next) => setDrafts((d) => ({ ...d, replanning: next as unknown as ReplanningConfig }))} />
+                  </Section>
+                ) : null}
+
+                {tab === "alerts" ? (
+                  <Section title={ALERTS_SECTION.title}>
+                    <p className="text-muted text-sm">{ALERTS_SECTION.description}</p>
+                    <SchemaForm schema={ALERTS_SECTION} value={alerts as unknown as Record<string, unknown>} disabled={!canEdit} onChange={(next) => setDrafts((d) => ({ ...d, alerts: next as unknown as AlertConfig }))} />
+                  </Section>
+                ) : null}
+
+                {tab === "data_quality" ? (
+                  <Section title={DATA_QUALITY_SECTION.title}>
+                    <p className="text-muted text-sm">{DATA_QUALITY_SECTION.description}</p>
+                    <SchemaForm schema={DATA_QUALITY_SECTION} value={dataQuality as unknown as Record<string, unknown>} disabled={!canEdit} onChange={(next) => setDrafts((d) => ({ ...d, data_quality: next as unknown as DataQualityConfig }))} />
+                  </Section>
+                ) : null}
+              </div>
+
+              <div className="col gap-3">
+                <Section title="How saving works">
+                  <p className="text-sm text-muted">Each section you change is stored as its own configuration version with your reason, user and timestamp (spec Phase 22). The scheduler picks the active version up on its next run; replanning stability rules limit how much a new version may move.</p>
+                  {dirty ? (
+                    <ul className="reason-list text-xs">
+                      {dirtySections.map((s) => (
+                        <li key={s}>
+                          <span className="strong">{SECTION_LABELS[s]}</span>: {diffJson(active?.[s], drafts[s]).length} field(s) changed
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </Section>
+                <ConfigVersionsPanel
+                  versions={versions.data}
+                  isPending={versions.isPending}
+                  error={versions.error}
+                  fetchVersion={fetchSchedulingConfigVersion}
+                  queryKeyPrefix={["scheduling", "configuration"]}
+                  extract={(cfg: SystemConfig) => ({ scheduling: cfg.scheduling, replanning: cfg.replanning, alerts: cfg.alerts, data_quality: cfg.data_quality })}
+                  current={active ? { scheduling: active.scheduling, replanning: active.replanning, alerts: active.alerts, data_quality: active.data_quality } : null}
+                  canActivate={canEdit}
+                  activating={activate.isPending}
+                  activateError={activate.error}
+                  onActivate={onActivate}
+                />
+              </div>
             </div>
           ) : null
         }
       </AsyncContent>
+
+      <ActionDialog
+        open={saveOpen}
+        title="Save new configuration version"
+        description={`Saves ${dirtySections.map((s) => SECTION_LABELS[s]).join(", ")} as new version(s). Recorded in the audit log.`}
+        submitLabel="Save version"
+        busy={save.isPending}
+        error={save.error}
+        onSubmit={(reason) => void onSave(reason)}
+        onClose={() => setSaveOpen(false)}
+      />
     </div>
   );
 }

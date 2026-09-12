@@ -114,8 +114,8 @@ def build_materials(rng: random.Random, profile: ScaleProfile, as_of: datetime) 
     materials: list[Material] = []
     shortage_codes = _shortage_codes(rng, templates)
     for template in templates:
-        available = round(rng.uniform(80.0, 900.0), 1)
-        reserved = round(available * rng.uniform(0.0, 0.45), 1)
+        available = round(rng.uniform(150.0, 1_500.0), 1)
+        reserved = round(available * rng.uniform(0.0, 0.35), 1)
         incoming = 0.0
         receipt: datetime | None = None
         if template.code in shortage_codes:
@@ -150,12 +150,14 @@ _AM_CLASSES = ("resin", "polymer_powder", "metal_powder", "filament")
 
 
 def _shortage_codes(rng: random.Random, templates: list[catalog.MaterialTemplate]) -> set[str]:
-    """~12 % of materials are out of stock: at least one machining metal and one AM feedstock.
+    """~6 % of materials are out of stock: one machining metal and one AM feedstock at least.
 
     Stratifying the shortages keeps ``MATERIAL_WAITING`` lines of both the CNC
-    and the additive side on a material of their own class.
+    and the additive side on a material of their own class. Every stock-out
+    blocks all open lines on that material, so two or three simultaneous
+    shortages already hold back ~5 % of the book.
     """
-    count = max(2, round(len(templates) * 0.12))
+    count = max(2, round(len(templates) * 0.06))
     picked: list[catalog.MaterialTemplate] = []
     for classes in (_METAL_CLASSES, _AM_CLASSES):
         pool = [t for t in templates if t.material_class in classes]
@@ -193,7 +195,11 @@ def build_machines(
     as_of: datetime,
     materials: list[Material],
 ) -> list[Machine]:
-    """Create machines per group; a couple are DOWN, some have maintenance windows."""
+    """Create machines per group; a couple are DOWN, some have maintenance windows.
+
+    The breakdown always hits the *second* machine of the group (``MC-CNC3-02``
+    on every scale) so that tests and demos can refer to it by id.
+    """
     machines: list[Machine] = []
     by_class: dict[str, list[str]] = {}
     for material in materials:
@@ -213,7 +219,7 @@ def build_machines(
             machine_id = f"MC-{group}-{index:02d}"
             status = MachineStatus.AVAILABLE
             unplanned: list[TimeWindow] = []
-            if down_budget > 0 and group in ("CNC3", "AM_FDM", "LATHE") and index == count:
+            if down_budget > 0 and group in ("CNC3", "AM_FDM", "LATHE") and index == min(2, count):
                 status = MachineStatus.DOWN
                 down_budget -= 1
                 unplanned.append(
@@ -242,7 +248,7 @@ def build_machines(
                         if spec.calendar == "printers"
                         else catalog.DEFAULT_CALENDAR_ID
                     ),
-                    efficiency=round(rng.uniform(0.82, 1.1), 2),
+                    efficiency=round(rng.uniform(0.88, 1.08), 2),
                     utilization=round(rng.uniform(0.45, 0.92), 2),
                     capacity_hours_per_day=spec.capacity_hours_per_day,
                     maintenance_windows=maintenance,

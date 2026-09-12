@@ -1,0 +1,37 @@
+.colpick {
+  position: relative;
+}
+.colpick-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  min-width: 200px;
+  max-height: 360px;
+  overflow: auto;
+  padding: var(--sp-1) 0;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+.colpick-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-3);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.colpick-item:hover {
+  background: var(--bg-hover);
+}
+.colpick-item.locked {
+  color: var(--fg-faint);
+}
+.colpick-foot {
+  padding: var(--sp-1) var(--sp-2) 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--sp-1);
+}

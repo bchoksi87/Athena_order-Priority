@@ -110,7 +110,7 @@ def test_migrate_applies_schema_to_sqlite_file(cli: Cli, db_url: str) -> None:
         "system_configs",
         "alembic_version",
     } <= tables
-    assert alembic_version(db_url) == "0001"
+    assert alembic_version(db_url) == "0002"
 
     again = cli("--json", "migrate")  # already at head: a no-op, still exit 0
     assert again.code == EXIT_OK
@@ -130,7 +130,7 @@ def test_migrate_postgres_test_database_is_at_head(cli_settings: Settings) -> No
     payload = json.loads(out.getvalue())
     assert payload["revision"] == "head"
     assert payload["database"].startswith("postgresql+psycopg://***@")  # credentials never printed
-    assert alembic_version(str(POSTGRES_URL)) == "0001"
+    assert alembic_version(str(POSTGRES_URL)) == "0002"
 
 
 # --------------------------------------------------------------------- seed
@@ -160,7 +160,7 @@ def test_sync_full_and_incremental_then_snapshot_stats(migrated: Cli) -> None:
     assert result.code == EXIT_OK, result.err
     lines = result.out.splitlines()
     assert lines[0].startswith("sync sync_") and "completed (full, connector=mock)" in lines[0]
-    assert "fetched:  customer=80, material=24, machine=12, tooling=16, calendar=2, order=301" in lines[1]
+    assert "fetched:  customer=80, material=24, machine=16, tooling=16, calendar=2, order=301" in lines[1]
     assert "upserted: customer=80" in lines[2]
     assert "issues: 1 {'duplicate_id': 1}" in lines[3]
     assert lines[4].strip() == "reconciliation: ok"
@@ -180,7 +180,7 @@ def test_sync_full_and_incremental_then_snapshot_stats(migrated: Cli) -> None:
     stats = migrated("snapshot-stats")
     assert stats.code == EXIT_OK, stats.err
     assert stats.out.splitlines()[0] == f"snapshot as of {DEFAULT_AS_OF.isoformat()} (source=db)"
-    assert "  machines     12" in stats.out and "  open_orders  277" in stats.out
+    assert "  machines     16" in stats.out and "  open_orders  229" in stats.out
     assert "  groups       " in stats.out and "CNC3" in stats.out
     assert "  calendars    CAL-2SHIFT, CAL-3SHIFT" in stats.out
 
@@ -189,8 +189,8 @@ def test_sync_full_and_incremental_then_snapshot_stats(migrated: Cli) -> None:
     payload = json.loads(stats_json.out)
     assert payload["command"] == "snapshot-stats" and payload["source"] == "db"
     assert payload["as_of"] == "2026-09-15T00:00:00+00:00"
-    assert payload["summary"]["orders"] == 301 and payload["summary"]["open_orders"] == 277
-    assert payload["summary"]["operations"] == 1448 and payload["summary"]["machines"] == 12
+    assert payload["summary"]["orders"] == 301 and payload["summary"]["open_orders"] == 229
+    assert payload["summary"]["operations"] == 1377 and payload["summary"]["machines"] == 16
     assert payload["default_calendar_id"] == DEFAULT_CALENDAR_ID
     assert "CNC3" in payload["machine_groups"] and payload["calendars"] == ["CAL-2SHIFT", "CAL-3SHIFT"]
     assert payload["customer_rules"] == 0
@@ -261,7 +261,32 @@ def test_usage_errors_and_help(cli: Cli, capsys: pytest.CaptureFixture[str]) -> 
     assert "{migrate,seed,sync,snapshot-stats,create-user,worker}" in captured.out
 
 
-def test_worker_is_a_placeholder(cli: Cli) -> None:
-    result = cli("worker")
-    assert result.code == EXIT_USAGE
-    assert result.err.strip() == "background worker not yet implemented" and result.out == ""
+# ------------------------------------------------------------------ worker
+
+
+def test_worker_once_runs_each_job(migrated: Cli) -> None:
+    assert migrated("seed").code == EXIT_OK
+    synced = migrated("--json", "worker", "--once", "sync")
+    assert synced.code == EXIT_OK, synced.err
+    payload = json.loads(synced.out)
+    assert payload["command"] == "worker" and payload["job"] == "sync" and payload["status"] == "completed"
+    assert payload["summary"]["records_upserted"]["order"] > 0
+
+    replanned = migrated("worker", "--once", "replan")
+    assert replanned.code == EXIT_OK, replanned.err
+    assert replanned.out.startswith("job replan completed in")
+    assert "action=awaiting_approval" in replanned.out and "candidate_version=1" in replanned.out
+
+    alerts = migrated("--json", "worker", "--once", "alerts")
+    assert alerts.code == EXIT_OK, alerts.err
+    assert json.loads(alerts.out)["summary"]["evaluated"] > 0
+
+
+def test_worker_once_reports_failure_with_exit_code(cli: Cli) -> None:
+    result = cli(
+        "--json", "worker", "--once", "replan"
+    )  # no schema yet: the job fails, the CLI does not crash
+    assert result.code == EXIT_ERROR
+    payload = json.loads(result.out)
+    assert payload["status"] == "failed" and payload["error"]
+    assert cli("worker", "--once", "frobnicate").code == EXIT_USAGE

@@ -108,6 +108,8 @@ class ScheduleVersionInfo:
     unscheduled: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     notes: str | None = None
+    analytics: dict[str, Any] | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

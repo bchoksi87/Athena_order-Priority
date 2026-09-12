@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     alerts,
+    analytics,
     audit,
     auth,
     customers,
@@ -20,7 +21,10 @@ from app.api.v1 import (
     machines,
     orders,
     priority_config,
+    schedule,
     scheduling_config,
+    simulation,
+    sync,
     users,
 )
 
@@ -30,6 +34,11 @@ api_router.include_router(auth.router)
 api_router.include_router(orders.router)
 api_router.include_router(machines.router)
 api_router.include_router(locks.router)
+# schedule after locks: its ``GET /schedule/{date}`` must not shadow ``/schedule/locks``
+api_router.include_router(schedule.router)
+api_router.include_router(simulation.router)
+api_router.include_router(analytics.router)
+api_router.include_router(sync.router)
 api_router.include_router(priority_config.router)
 api_router.include_router(scheduling_config.router)
 api_router.include_router(customers.router)

@@ -130,3 +130,14 @@
   text-align: center;
   color: var(--fg-muted);
 }
+
+.dt tbody tr.clickable:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.dt tbody tr.row-blocked td {
+  color: var(--fg-muted);
+}
+.dt tbody tr.row-blocked td:first-child {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--status-blocked-soft) 6px 8px);
+}

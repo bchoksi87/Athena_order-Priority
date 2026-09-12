@@ -1,0 +1,61 @@
+.jd table {
+  width: 100%;
+  font-size: var(--fs-xs);
+  table-layout: fixed;
+}
+.jd th {
+  text-align: left;
+  padding: 4px 8px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.jd th:first-child {
+  width: 28%;
+}
+.jd td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.jd-path code {
+  color: var(--fg);
+}
+.jd-cell code {
+  white-space: pre-wrap;
+  color: var(--fg-muted);
+}
+.jd-before code {
+  color: var(--status-late);
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 81, 73, 0.5);
+}
+.jd-after code {
+  color: var(--status-ready);
+}
+.jd-empty {
+  color: var(--fg-faint);
+}
+.jd-tag {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-faint);
+}
+.jd-tag-added {
+  color: var(--status-ready);
+}
+.jd-tag-removed {
+  color: var(--status-late);
+}
+.jd-tag-changed {
+  color: var(--status-at-risk);
+}
+.jd-unchanged td {
+  opacity: 0.6;
+}

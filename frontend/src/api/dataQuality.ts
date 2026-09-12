@@ -1,31 +1,51 @@
+/** /data-quality — dashboard summary, issues of the latest run and manual runs (spec Phase 21). */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { ApiClient } from "./client";
-import { toPaged } from "./client";
+import { fromPageResponse, resolvePaging } from "./client";
 import { useApiClient } from "./context";
 import { queryKeys } from "./queryKeys";
-import type { DataQualityIssue, DataQualityQuery, DataQualityRunResponse, ListResponse, Paged } from "./types";
+import type { DataQualityIssue, DataQualityQuery, DataQualitySummary, PageResponse, Paged } from "./types";
 
-export async function fetchDataQuality(
-  client: ApiClient,
-  params: DataQualityQuery = {},
-): Promise<Paged<DataQualityIssue>> {
-  const res = await client.get<ListResponse<DataQualityIssue>>("/data-quality", { ...params });
-  return toPaged(res);
+export function fetchDataQualitySummary(client: ApiClient): Promise<DataQualitySummary> {
+  return client.get<DataQualitySummary>("/data-quality");
 }
 
-export function runDataQuality(client: ApiClient): Promise<DataQualityRunResponse> {
-  return client.post<DataQualityRunResponse>("/data-quality/run", {});
+export async function fetchDataQualityIssues(client: ApiClient, params: DataQualityQuery = {}): Promise<Paged<DataQualityIssue>> {
+  const paging = resolvePaging(params, 50);
+  const res = await client.get<PageResponse<DataQualityIssue>>("/data-quality/issues", {
+    ...paging,
+    severity: params.severity,
+    code: params.code,
+    entity_type: params.entity_type,
+    entity_id: params.entity_id,
+  });
+  return fromPageResponse(res);
 }
 
-export function useDataQuality(params: DataQualityQuery = {}) {
+/** @deprecated use fetchDataQualityIssues. */
+export const fetchDataQuality = fetchDataQualityIssues;
+
+export function runDataQuality(client: ApiClient): Promise<DataQualitySummary> {
+  return client.post<DataQualitySummary>("/data-quality/run", {});
+}
+
+export function useDataQualitySummary() {
+  const client = useApiClient();
+  return useQuery({ queryKey: queryKeys.dataQuality.summary, queryFn: () => fetchDataQualitySummary(client) });
+}
+
+export function useDataQualityIssues(params: DataQualityQuery = {}) {
   const client = useApiClient();
   return useQuery({
     queryKey: queryKeys.dataQuality.list(params),
-    queryFn: () => fetchDataQuality(client, params),
+    queryFn: () => fetchDataQualityIssues(client, params),
     placeholderData: (prev) => prev,
   });
 }
+
+/** @deprecated use useDataQualityIssues. */
+export const useDataQuality = useDataQualityIssues;
 
 export function useRunDataQuality() {
   const client = useApiClient();
@@ -33,7 +53,12 @@ export function useRunDataQuality() {
   return useMutation({
     mutationFn: () => runDataQuality(client),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.dataQuality.all });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: queryKeys.dataQuality.all }),
+        qc.invalidateQueries({ queryKey: queryKeys.orders.all }),
+        qc.invalidateQueries({ queryKey: queryKeys.alerts.all }),
+        qc.invalidateQueries({ queryKey: queryKeys.audit.all }),
+      ]);
     },
   });
 }
