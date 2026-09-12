@@ -154,7 +154,9 @@ Canonical factor keys (weights configurable per `PriorityProfile`):
 production_readiness, machine_availability, setup_efficiency, batching_affinity, downstream_impact`.
 Final score = Σ(weight_i × raw_i) for bonus factors − Σ(weight_i × raw_i) for penalty factors,
 then + adjustments (aging, fairness, expedite, override, customer rule), clamped to [0, 100].
-Weights are normalised so that the bonus weights sum to 1.0. Explanation text is rendered from the
+Weights are normalised so that all enabled positive weights sum to 1.0 (`PriorityProfile.weight_map()`).
+The shipped factors are all bonus-kind: a large setup lowers the setup-efficiency bonus instead of
+adding a separate penalty line; penalty-kind factors remain supported. Explanation text is rendered from the
 `FactorScore`/`PriorityAdjustment` lists, never written independently.
 
 ### 6.2 Constraint engine (`app/engines/constraints`)

@@ -49,13 +49,14 @@ these are additive and documented here as part of the protocol.
 | Mode | Trigger | Behaviour | When to use |
 |---|---|---|---|
 | **Full** | `POST /sync/run {"mode":"full"}`, first run, nightly job | `since=None`; every entity fetched; upsert all; records absent from the ERP but present locally are marked inactive/closed (never deleted); reconciliation compares totals | Initial load, recovery after failed incrementals, ERPs without change tracking |
-| **Incremental** | Worker every `PPSE_SYNC_INTERVAL_MINUTES` (default 15) | `since = last successful run watermark − overlap`; only changed rows; upsert; reconciliation on changed entities | Normal operation; requires reliable `updated_at` in the ERP (U-06) |
+| **Incremental** | Worker every `PPSE_SYNC_INTERVAL_MINUTES` (default 15) | `since = started_at of the most recent completed run` (using the start rather than the end of that run is the built-in overlap); only changed rows; upsert; reconciliation on fetched-vs-upserted counts | Normal operation; requires reliable `updated_at` in the ERP (U-06) |
 | **Webhook-ready** | ERP pushes an event (future, D-11) | The receiver converts the event payload into `RawRecord`s and feeds the same normalise → upsert path; then raises a replanning trigger | Near-real-time replanning without polling |
 
-Watermarks (design rule for `SyncService`, the application service that joins connector,
-normaliser and repositories): each `sync_runs` row stores the `as_of` used; the next incremental
-run subtracts a configurable overlap (proposed default 5 minutes) to tolerate clock skew, and
-de-duplicates by `(entity, external_id)`. A full run resets the watermark.
+Watermarks (as implemented in `app/integration/sync_service.py`): each `sync_runs` row stores its
+`started_at`; the next incremental run uses the `started_at` of the most recent *completed* run as
+`since`, so records changed while that run was fetching are picked up again rather than lost. Failed
+runs never advance the watermark; without any completed run an incremental request degrades to a
+full fetch (recorded in the run details). Records are de-duplicated by `(entity, external_id)`.
 
 `SyncService.run(mode)` = fetch (`snapshot_builder.fetch_all`) → normalise → validate → upsert →
 `reconcile` → record. It is idempotent: re-running with the same data changes nothing but the
@@ -159,14 +160,14 @@ spot-check of N random orders field-by-field (planned as a nightly job).
 
 | Failure | Handling |
 |---|---|
-| Connector unreachable / timeout / 5xx | `IntegrationError`; retry with exponential backoff (base 2 s, factor 2, max 5 attempts, jitter) inside the fetch of the failing entity; then the run is marked FAILED, previous data stays, alert raised, next scheduled run retries |
+| Connector unreachable / timeout / 5xx | `RetryPolicy` in `app/integration/retry.py`: 3 attempts, exponential backoff (base 0.5 s, factor 2, capped at 30 s; sleep is injectable for tests) around each connector fetch; then `IntegrationError`, the run is marked FAILED with the error recorded, partial upserts are rolled back, previous data stays, and the next scheduled run retries |
 | Authentication failure (401/403) | No retry; FAILED with code `auth`; alert with recommended action "rotate credentials"; connector health reports degraded |
-| Partial entity failure (e.g. tooling endpoint down) | Other entities complete; run marked PARTIAL; dependent features (tooling readiness) fall back to `None` and DQ warns |
+| Partial entity failure (e.g. tooling endpoint down) | Today the whole run fails atomically (no half-written dataset). A PARTIAL status that keeps the other entities is planned once a real connector exists |
 | Malformed record | Skipped with `NormalizationIssue`; run continues; issue counts stored |
 | Reference to unknown master (order → missing customer) | Upserted with the reference kept; DQ `UNKNOWN_REFERENCE` warning; resolved on next master sync |
 | Reconciliation MISMATCH | Run SUCCEEDED with warning; alert; auto-replan paused for orders until a full sync is OK |
-| Watermark gap (worker down > overlap) | Next run detects gap > `2 × interval` and escalates to full sync automatically |
-| ERP rate limit (429) | Honour `Retry-After`; page size halved for the run |
+| Watermark gap (worker down for a long time) | Planned: escalate to a full sync when the gap exceeds `2 × interval`; today the incremental run simply fetches everything changed since the last completed run |
+| ERP rate limit (429) | Planned for the REST connector: honour `Retry-After`; halve the page size for the run |
 
 All failures are logged with `sync_run_id`, entity, attempt and (sanitised) error text; never with
 credentials or full payloads at INFO level.
