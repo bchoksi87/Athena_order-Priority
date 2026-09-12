@@ -216,7 +216,13 @@ class PriorityProfile(BaseModel):
         description="Adjustment points by ERP priority code",
     )
     blocked_order_cap: float | None = Field(
-        default=None, description="Optional cap on score for blocked orders (None = no cap)"
+        default=70.0,
+        description=(
+            "Cap on the score of orders that cannot run now (waiting for material, tooling, approval, "
+            "on hold ...). Keeps blocked orders visible but below ready work in the queue (spec Phase 3: "
+            "an order due tomorrow but lacking material should not simply be placed first). None = no cap; "
+            "FORCE_NEXT overrides ignore the cap."
+        ),
     )
 
     @field_validator("weights")

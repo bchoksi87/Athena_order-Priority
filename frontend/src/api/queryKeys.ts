@@ -27,6 +27,17 @@ export const queryKeys = {
     byDate: (date: string) => ["schedule", "date", date] as const,
     versions: ["schedule", "versions"] as const,
     version: (v: number) => ["schedule", "version", v] as const,
+    plan: (params: unknown) => ["schedule", "plan", params] as const,
+    versionList: (params: unknown) => ["schedule", "versions", "list", params] as const,
+    versionDetail: (v: number) => ["schedule", "versions", "detail", v] as const,
+    versionEntries: (v: number, params: unknown) => ["schedule", "versions", "entries", v, params] as const,
+    gantt: (params: unknown) => ["schedule", "gantt", params] as const,
+    day: (date: string, version: number | undefined) => ["schedule", "day", date, version ?? "current"] as const,
+    compare: (a: number, b: number) => ["schedule", "compare", a, b] as const,
+  },
+  simulation: {
+    all: ["simulation"] as const,
+    scenarioTypes: ["simulation", "scenario-types"] as const,
   },
   priority: {
     all: ["priority"] as const,
@@ -47,6 +58,7 @@ export const queryKeys = {
     rules: (id: string) => ["customers", "rules", id] as const,
   },
   analytics: {
+    all: ["analytics"] as const,
     kpis: ["analytics", "kpis"] as const,
     capacity: (params: unknown) => ["analytics", "capacity", params] as const,
     bottlenecks: ["analytics", "bottlenecks"] as const,

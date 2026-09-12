@@ -11,3 +11,6 @@ export * from "./types/results";
 export * from "./types/config";
 export * from "./types/api";
 export * from "./types/system";
+export * from "./types/analytics";
+export * from "./types/schedule";
+export * from "./types/simulation";
