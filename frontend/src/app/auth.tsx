@@ -9,6 +9,7 @@ import { ApiClient, ApiError, resolveBaseUrl } from "@/api/client";
 import { ApiClientProvider } from "@/api/context";
 import { fetchMe, login as loginRequest } from "@/api/auth";
 import type { Role, UserInfo } from "@/api/types";
+import { installDemoFetch, isDemoMode } from "@/demo";
 import { ROLE_RANK, STORAGE_KEYS } from "@/lib/constants";
 
 export interface StoredSession {
@@ -72,7 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : { status: "anonymous", user: null, token: null, expiresAt: null };
   });
   // One client per provider instance; its token is updated from event handlers, never during render.
-  const [client] = useState(() => new ApiClient({ baseUrl: resolveBaseUrl(), token: state.token }));
+  // DEMO MODE (VITE_DEMO_MODE=true): every request is answered in the page by the demo backend.
+  const [client] = useState(() => new ApiClient({ baseUrl: resolveBaseUrl(), token: state.token, fetchImpl: isDemoMode() ? installDemoFetch() : undefined }));
 
   const value = useMemo<AuthContextValue>(() => {
     const logout = () => {

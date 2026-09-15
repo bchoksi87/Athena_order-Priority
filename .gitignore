@@ -27,3 +27,9 @@ frontend/.vite/
 .DS_Store
 .idea/
 .vscode/
+
+# Demo capture artefacts (frontend/src/demo/demo-data.json is the shipped dataset)
+backend/scripts/.demo-raw.json
+backend/scripts/.capture_uvicorn.log
+frontend/src/demo/.demo-verify.json
+frontend/dist-demo/

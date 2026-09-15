@@ -4,6 +4,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAlerts } from "@/api/alerts";
 import { useHealth } from "@/api/system";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { isDemoMode } from "@/demo/mode";
 import { ROLE_LABELS, WRITEBACK_LABELS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/time";
 
@@ -130,6 +131,11 @@ export function AppShell() {
         <span className="topbar-clock">{formatDateTime(now, "EEE dd MMM HH:mm")}</span>
         <div className="topbar-badges">
           <span className="badge badge-env">{APP_ENV}</span>
+          {isDemoMode() ? (
+            <span className="badge badge-demo" data-testid="demo-badge" title="Demo mode: no backend. Every API call is answered in the page from engine output captured from the real backend; your changes stay in this browser.">
+              DEMO
+            </span>
+          ) : null}
           <WritebackBadge />
           <HealthBadge />
         </div>

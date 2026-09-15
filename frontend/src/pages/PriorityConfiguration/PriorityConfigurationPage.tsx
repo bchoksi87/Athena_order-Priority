@@ -169,7 +169,7 @@ export default function PriorityConfigurationPage() {
               </span>
               {configQuery.data?.version ? <span className="text-faint">active config v{configQuery.data.version.version}</span> : null}
               {dirty ? <span className="pill pill-at-risk pill-sm">{changes.length} UNSAVED CHANGE{changes.length > 1 ? "S" : ""}</span> : null}
-              {!canEdit ? <span className="pill pill-neutral pill-sm">READ ONLY · admin saves</span> : null}
+              {!canEdit ? <span className="pill pill-neutral pill-sm">PREVIEW ONLY · admin saves</span> : null}
             </span>
           ) : (
             "Factor weights and scoring rules of the priority engine"
@@ -233,12 +233,12 @@ export default function PriorityConfigurationPage() {
                             </div>
                           </td>
                           <td>
-                            <input type="checkbox" checked={w.enabled} disabled={!canEdit} onChange={(e) => updateWeight(w.key, { enabled: e.target.checked })} aria-label={`Enable ${w.key}`} />
+                            <input type="checkbox" checked={w.enabled} disabled={!canPreview} onChange={(e) => updateWeight(w.key, { enabled: e.target.checked })} aria-label={`Enable ${w.key}`} />
                           </td>
                           <td>
                             <div className="row">
-                              <input type="range" min={0} max={100} step={1} value={w.weight} disabled={!canEdit || !w.enabled} onChange={(e) => updateWeight(w.key, { weight: Number(e.target.value) })} style={{ flex: 1 }} aria-label={`Weight ${w.key}`} />
-                              <input className="input num" type="number" min={0} max={100} step={1} value={w.weight} disabled={!canEdit || !w.enabled} onChange={(e) => updateWeight(w.key, { weight: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} style={{ width: 64 }} aria-label={`Weight value ${w.key}`} />
+                              <input type="range" min={0} max={100} step={1} value={w.weight} disabled={!canPreview || !w.enabled} onChange={(e) => updateWeight(w.key, { weight: Number(e.target.value) })} style={{ flex: 1 }} aria-label={`Weight ${w.key}`} />
+                              <input className="input num" type="number" min={0} max={100} step={1} value={w.weight} disabled={!canPreview || !w.enabled} onChange={(e) => updateWeight(w.key, { weight: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} style={{ width: 64 }} aria-label={`Weight value ${w.key}`} />
                             </div>
                           </td>
                           <td className="num" data-testid={`weight-share-${w.key}`}>
@@ -258,10 +258,10 @@ export default function PriorityConfigurationPage() {
                     ) : section ? (
                       <>
                         {section.description ? <p className="text-muted text-sm">{section.description}</p> : null}
-                        <SchemaForm schema={section} value={draft[section.key as keyof PriorityProfile] as Record<string, unknown>} disabled={!canEdit} onChange={(next) => update({ [section.key]: next } as Partial<PriorityProfile>)} />
+                        <SchemaForm schema={section} value={draft[section.key as keyof PriorityProfile] as Record<string, unknown>} disabled={!canPreview} onChange={(next) => update({ [section.key]: next } as Partial<PriorityProfile>)} />
                       </>
                     ) : (
-                      <SchemaForm schema={PRIORITY_TOP_LEVEL} value={{ erp_priority_points: draft.erp_priority_points, blocked_order_cap: draft.blocked_order_cap }} disabled={!canEdit} onChange={(next) => update(next as Partial<PriorityProfile>)} />
+                      <SchemaForm schema={PRIORITY_TOP_LEVEL} value={{ erp_priority_points: draft.erp_priority_points, blocked_order_cap: draft.blocked_order_cap }} disabled={!canPreview} onChange={(next) => update(next as Partial<PriorityProfile>)} />
                     )}
                   </div>
                 </Section>
@@ -280,7 +280,7 @@ export default function PriorityConfigurationPage() {
               <div className="col gap-3">
                 <Section title="Profile">
                   <div className="col gap-1">
-                    <TextField label="Name" value={draft.name} disabled={!canEdit} onChange={(v) => update({ name: v })} />
+                    <TextField label="Name" value={draft.name} disabled={!canPreview} onChange={(v) => update({ name: v })} />
                     <dl className="kv mt-2">
                       <dt>Profile id</dt>
                       <dd className="mono">{draft.profile_id}</dd>

@@ -164,6 +164,11 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+.badge-demo {
+  color: var(--status-hold);
+  border-color: var(--status-hold);
+  background: var(--status-hold-soft);
+}
 .badge-writeback {
   color: var(--status-at-risk);
   border-color: var(--status-at-risk);

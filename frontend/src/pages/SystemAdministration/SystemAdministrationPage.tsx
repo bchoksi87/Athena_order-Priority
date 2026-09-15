@@ -14,6 +14,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { PageHeader } from "@/components/PageHeader";
 import { Section } from "@/components/Section";
 import { StatusPill } from "@/components/StatusPill";
+import { isDemoMode, resetDemoData } from "@/demo";
 import { ROLES, ROLE_LABELS, WRITEBACK_LABELS, humanize, syncStatusTone } from "@/lib/constants";
 import { formatNumber, formatScore } from "@/lib/formatters";
 import { formatDateTime, formatRelative } from "@/lib/time";
@@ -56,9 +57,24 @@ export default function SystemAdministrationPage() {
           </span>
         }
         actions={
-          <button type="button" className="btn btn-sm" onClick={() => void Promise.all([health.refetch(), metrics.refetch()])} disabled={health.isFetching}>
-            {health.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
+          <>
+            {isDemoMode() ? (
+              <button
+                type="button"
+                className="btn btn-sm"
+                data-testid="reset-demo-data"
+                title="Demo mode: drop every change made in this browser (overrides, expedites, plans, configuration versions, users, audit rows) and reload the captured dataset"
+                onClick={() => {
+                  if (window.confirm("Reset the demo data? Every change made in this browser is dropped and the page reloads.")) void resetDemoData();
+                }}
+              >
+                Reset demo data
+              </button>
+            ) : null}
+            <button type="button" className="btn btn-sm" onClick={() => void Promise.all([health.refetch(), metrics.refetch()])} disabled={health.isFetching}>
+              {health.isFetching ? "Refreshing…" : "Refresh"}
+            </button>
+          </>
         }
       />
 

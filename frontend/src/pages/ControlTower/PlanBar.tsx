@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { describeError } from "@/api/client";
-import { useApproveSchedule, useEvaluateReplan, useGenerateSchedule, usePublishSchedule, useRejectSchedule } from "@/api/schedule";
+import { useApproveSchedule, useEvaluateReplan, useGenerateSchedule, usePublishSchedule, useRejectSchedule, useScheduleVersions } from "@/api/schedule";
 import type { ReplanOutcome, ScheduleQualityReport, ScheduleVersionResponse, SchedulePlan } from "@/api/types";
 import { useAuth } from "@/app/auth";
 import { routes } from "@/app/nav";
@@ -53,6 +53,11 @@ export function PlanBar({ plan, quality, loading }: PlanBarProps) {
   const active = plan?.version ?? null;
   // A newer draft than the active plan awaits the manager's decision (the report exposes it).
   const draft = quality?.newest_draft && (!active || quality.newest_draft.version_number !== active.version_number) ? quality.newest_draft : null;
+  // An approved version that is not the active plan can still be published (the API allows it);
+  // without this the manager could approve a newer draft but never release it while a plan is live.
+  const approvedVersions = useScheduleVersions({ status: "approved", page_size: 5 });
+  const approvedCandidate =
+    approvedVersions.data?.items.find((v) => !active || v.version_number !== active.version_number) ?? null;
   const canPlan = hasMinRole("planner");
   const canApprove = hasMinRole("production_manager");
 
@@ -116,6 +121,11 @@ export function PlanBar({ plan, quality, loading }: PlanBarProps) {
           Publish v{active.version_number}
         </button>
       ) : null}
+      {canApprove && approvedCandidate && active?.status !== "approved" ? (
+        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPending({ action: "publish", version: approvedCandidate })}>
+          Publish v{approvedCandidate.version_number}
+        </button>
+      ) : null}
       {canApprove && active && (active.status === "draft" || active.status === "approved") ? (
         <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => setPending({ action: "reject", version: active })}>
           Reject v{active.version_number}
@@ -147,9 +157,15 @@ export function PlanBar({ plan, quality, loading }: PlanBarProps) {
               </span>
               {canApprove ? (
                 <span className="row gap-1">
-                  <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPending({ action: "approve", version: draft })}>
-                    Approve v{draft.version_number}
-                  </button>
+                  {draft.status === "approved" ? (
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPending({ action: "publish", version: draft })}>
+                      Publish v{draft.version_number}
+                    </button>
+                  ) : (
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setPending({ action: "approve", version: draft })}>
+                      Approve v{draft.version_number}
+                    </button>
+                  )}
                   <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => setPending({ action: "reject", version: draft })}>
                     Reject v{draft.version_number}
                   </button>

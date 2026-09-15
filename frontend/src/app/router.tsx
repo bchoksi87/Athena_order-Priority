@@ -1,8 +1,9 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, createHashRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { LoadingState } from "@/components/LoadingState";
 import { ErrorState } from "@/components/ErrorState";
+import { isDemoMode } from "@/demo";
 
 import { AppShell } from "./AppShell";
 import { useAuth } from "./auth";
@@ -48,7 +49,11 @@ function lazyPage(node: ReactNode): ReactNode {
   return <Suspense fallback={<LoadingState label="Loading screen" />}>{node}</Suspense>;
 }
 
-export const router = createBrowserRouter([
+// The static demo bundle is served from any path (or embedded in a host page), so deep links and
+// refreshes only work with hash routing; the real deployment keeps clean URLs (nginx falls back to index.html).
+const createRouter = isDemoMode() ? createHashRouter : createBrowserRouter;
+
+export const router = createRouter([
   { path: routes.login, element: lazyPage(<LoginPage />) },
   {
     path: "/",

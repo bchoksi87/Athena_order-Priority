@@ -57,3 +57,69 @@
   font-size: var(--fs-xs);
   margin-top: 2px;
 }
+
+/* DEMO MODE: the sign-in card plus the accounts / "what to try" panel side by side. */
+.login-layout {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  width: 100%;
+  max-width: 940px;
+}
+.login-demo {
+  flex: 1 1 380px;
+  max-width: 520px;
+  padding: var(--sp-5);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.login-demo-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.login-demo-accounts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+.login-demo-account {
+  height: auto;
+  padding: var(--sp-2) var(--sp-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  white-space: normal;
+}
+.login-demo-account-name {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+}
+.login-demo-tour ol {
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-5);
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.login-demo-tour strong {
+  color: var(--fg);
+}
+@media (max-width: 800px) {
+  .login-demo-accounts {
+    grid-template-columns: 1fr;
+  }
+}

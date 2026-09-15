@@ -1,8 +1,10 @@
 node_modules/
 dist/
+dist-demo/
 .vite/
 coverage/
 *.local
 .env
 .env.*
 !.env.example
+!.env.demo

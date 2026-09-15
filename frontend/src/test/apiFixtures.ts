@@ -48,7 +48,7 @@ export function makeOrderRow(overrides: Partial<OrderListItemResponse["order"]> 
       quantity: 13,
       pending_quantity: 13,
       completed_quantity: 0,
-      due_date: "2026-09-13T12:00:00Z",
+      due_date: "2036-09-13T12:00:00Z",
       order_date: "2026-08-26T12:00:00Z",
       order_status: "scheduled",
       production_status: "SCHEDULED",
