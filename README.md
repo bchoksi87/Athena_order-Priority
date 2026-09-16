@@ -123,6 +123,7 @@ integration tests. Details in `docs/TESTING.md`.
 
 | Document | What it covers |
 |---|---|
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Operating guide: roles, the daily planning cycle, every screen, order actions, configuration, what-if, situation runbook |
 | [`docs/AUDIT_REPORT.md`](docs/AUDIT_REPORT.md) | Repository/ERP audit, missing data, proposed architecture, roadmap, risks, MVP definition |
 | [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Functional / non-functional requirements, assumptions, unknowns, ERP dependencies, future work |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, data flows, design decisions and rejected alternatives, extension points |

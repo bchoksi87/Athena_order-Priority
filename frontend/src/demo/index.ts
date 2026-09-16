@@ -38,7 +38,7 @@ export const DEMO_TOUR: ReadonlyArray<{ title: string; text: string }> = [
   { title: "Expedite", text: "Sign in as manager, expedite an order: a +30 adjustment appears in its explanation and the queue re-ranks." },
   { title: "Change weights", text: "Priority Configuration: move Due Date Urgency to 40, Preview impact, then save (admin) — every order is re-scored." },
   { title: "What-if", text: "What-If Simulation: run one of the preset scenario kinds (machine down 8 h, urgent orders, extra Saturday…) to see baseline vs scenario." },
-  { title: "Approve / reject", text: "Control Tower plan bar (manager): approve or reject the newest draft with an audited reason. Publishing an approved plan supersedes v1 and records the read-only writeback receipt (POST /schedule/publish; the plan bar only offers it when no plan is published yet)." },
+  { title: "Approve / reject", text: "Control Tower plan bar (manager): approve or reject the newest draft with an audited reason. Then publish it from the plan bar: the previous plan is superseded and the read-only writeback receipt is recorded." },
 ];
 
 /**
